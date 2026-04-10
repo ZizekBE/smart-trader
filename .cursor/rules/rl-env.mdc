@@ -1,0 +1,11 @@
+---
+description: Gym MarketEnv、Reward、Simulator 与观测空间
+globs: python/src/smart_trader/env/**/*.py
+alwaysApply: false
+---
+
+# RL 环境层
+
+- 修改 `MarketEnv`、`spaces`、`reward`、`simulator` 时同步检查：`build_observation_space` 维度、`MetaController` 输入、`act()` 与 `step(action)` 字段类型（离散用 `int`，连续用正确 shape 的 `float32`）。
+- 多品种训练使用 `MarketEnvConfig.datasets`；单品种仍可用 `data=`。
+- 奖励缩放、归一化、`RunningNormalizer` 与 PPO 的 `gamma` 需一并考虑稳定性。

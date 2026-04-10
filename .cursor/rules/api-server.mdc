@@ -1,0 +1,11 @@
+---
+description: FastAPI server 路由与 trader 控制
+globs: python/src/smart_trader/api/**/*.py
+alwaysApply: false
+---
+
+# API
+
+- 路由与请求体保持与 `ui/src/lib/api.ts` 一致；改路径时同步前端。
+- 启动 `HybridLoop` / `TradingLoop` 时注意与 `docker-compose` 中 `env_file`、`configs` 挂载一致。
+- 长任务（回测）考虑超时与日志；勿在请求处理中阻塞事件循环过久。

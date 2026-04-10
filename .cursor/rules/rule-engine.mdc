@@ -1,0 +1,11 @@
+---
+description: 规则引擎 — TradingLoop、策略、执行与风控
+globs: python/src/smart_trader/trader/**/*.py,python/src/smart_trader/strategy/**/*.py,python/src/smart_trader/execution/**/*.py,python/src/smart_trader/risk/**/*.py,python/src/smart_trader/sleeve/**/*.py
+alwaysApply: false
+---
+
+# 规则交易链路
+
+- **主循环**：`TradingLoop` 每根信号 K 线：同步 K 线 → 平仓检查 → 趋势/波动率/信号 → 风控 → 执行；保持与 `python/README.md` 中管道一致。
+- **混合**：`HybridLoop` 与 `sleeve/`、`Settings.hybrid_*` 对齐；改资金比例时同步 hybrid 回测引擎。
+- **纸面/实盘**：由 `Settings.trading_mode` 与 `ExecutionEngine`/`OrderManager` 统一路径，避免分叉两套下单逻辑。

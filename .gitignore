@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+.uv/
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb~
+
+# Rust
+rust/target/
+
+# Secrets — NEVER commit
+configs/envs/.env
+configs/envs/*.env
+!configs/envs/.env.example
+
+configs/secrets/.env
+configs/secrets/*.env
+!configs/secrets/.env.example
+
+# Model artifacts
+models/
+*.pkl
+*.pt
+*.onnx
+*.joblib
+
+# Docker volumes (local dev)
+.docker/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS / local build noise
+.DS_Store
+ui/.next/
+ui/tsconfig.tsbuildinfo
+ui/.env.local
+python/checkpoints/

@@ -1,0 +1,12 @@
+---
+description: Python 风格与 uv/pytest 约定
+globs: python/**/*.py
+alwaysApply: false
+---
+
+# Python（smart-trader）
+
+- **工具**：`uv` 管理依赖；`cd python && uv run …` 执行脚本与 CLI。
+- **风格**：与现有模块一致的类型注解、`structlog` 日志、`from __future__ import annotations`；行宽与 ruff 配置对齐（`pyproject.toml`）。
+- **测试**：有改动的逻辑优先用 `pytest`（`uv run --extra dev pytest`）；脚本级集成测在 `python/scripts/test_*.py`。
+- **导入**：包内用 `smart_trader.*`；脚本需 `sys.path` 指向 `src` 时沿用现有 `train_rl_agent.py` 等写法。

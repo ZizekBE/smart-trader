@@ -1,0 +1,12 @@
+---
+description: smart-trader 全局约定 — 架构、安全与变更范围
+alwaysApply: true
+---
+
+# smart-trader 核心约定
+
+- **分层**：数据 ingestion → 策略（trend / vol / signals）→ 风控 → 执行；RL 为独立链路（`env/`、`agent/`、`scripts/train_rl_agent.py`），勿与规则引擎混在同一文件里堆逻辑。
+- **配置**：非敏感用 `configs/envs/.env`，密钥仅 `configs/secrets/.env`；代码通过 `get_settings()` / `load_repo_env_files()`，勿在仓库中硬编码 API Key。
+- **交易所**：业务代码依赖 `ExchangeAdapter` / `create_adapter()`，避免在策略层直接 `import ccxt`。
+- **变更范围**：只改与任务相关的文件；禁止顺手大重构、禁止无请求新增 markdown 文档。
+- **异步**：DB 与 IO 使用已有 `async` 模式（SQLAlchemy async、asyncpg），新代码需与现有一致。

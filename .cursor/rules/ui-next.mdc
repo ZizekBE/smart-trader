@@ -1,0 +1,10 @@
+---
+description: Next.js UI 与 API 对接
+globs: ui/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# UI（Next）
+
+- 后端基址来自环境变量（如 `API_URL`）；勿把密钥写进 `ui/` 源码。
+- 与 `smart_trader.api.server` 的契约以实际路由为准（`/api/candles`、回测、trader 控制等）；改 API 时同步更新 `ui/src/lib/api.ts` 与调用方。

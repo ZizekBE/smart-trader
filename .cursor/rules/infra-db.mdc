@@ -1,0 +1,11 @@
+---
+description: TimescaleDB 迁移与 SQL 约定
+globs: infra/timescaledb/**/*.sql
+alwaysApply: false
+---
+
+# 数据库迁移
+
+- 迁移文件放在 `infra/timescaledb/migrations/`，命名序号递增；勿在生产库上直接手改已应用脚本。
+- `candles` 为 hypertable 时注意 chunk、压缩与索引策略；大表变更前评估锁与回放时间。
+- Python ORM 模型与 SQL 列类型变更需同步（`data/models/`）。

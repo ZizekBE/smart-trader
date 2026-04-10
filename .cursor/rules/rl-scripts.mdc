@@ -1,0 +1,11 @@
+---
+description: train_rl_agent 与 eval_walkforward 脚本
+globs: python/scripts/train_rl_agent.py,python/scripts/eval_walkforward.py
+alwaysApply: false
+---
+
+# RL 脚本
+
+- 数据加载：优先保持与 DB 的异步 SQL + pandas 路径一致；多 symbol 时单次 `asyncio.run(load_all_data(...))`，避免多次 `asyncio.run` 与 async engine 混用不同事件循环。
+- 训练前确认 `configs/secrets/.env` 中 `DB_*` 可用；`--exchange` 与库中 `candles.exchange` 一致。
+- 评估 checkpoint 的 `--d-model` / `--n-layers` / `--n-heads` 须与保存时一致。

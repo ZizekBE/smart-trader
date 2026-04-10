@@ -1,0 +1,279 @@
+"""Walk-forward out-of-sample evaluation of a trained RL agent.
+
+Splits 2-year BTC data into rolling windows:
+  - Train window is skipped (agent already trained)
+  - Test on N consecutive non-overlapping 7-day windows
+
+The agent runs in deterministic mode — no exploration.
+
+Usage::
+
+    uv run python scripts/eval_walkforward.py \
+        --checkpoint ./checkpoints/binance_2m/checkpoint_635.pt
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT / "src"))
+
+import structlog
+structlog.configure(
+    processors=[structlog.dev.ConsoleRenderer(colors=True)],
+    wrapper_class=structlog.make_filtering_bound_logger(20),
+)
+log = structlog.get_logger(__name__)
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Walk-forward RL agent evaluation")
+    p.add_argument("--checkpoint", required=True, help="Path to agent .pt checkpoint")
+    p.add_argument("--symbols", nargs="+", default=["BTC/USDT"],
+                    help="One or more symbols to evaluate")
+    p.add_argument("--exchange", default="binance")
+    p.add_argument("--test-days", type=int, default=7, help="Test window in days")
+    p.add_argument("--n-folds", type=int, default=20, help="Number of test folds per symbol")
+    p.add_argument("--d-model", type=int, default=128)
+    p.add_argument("--n-layers", type=int, default=2)
+    p.add_argument("--n-heads", type=int, default=4)
+    p.add_argument("--device", default="cpu")
+    return p.parse_args()
+
+
+async def load_all_data(
+    symbols: list[str], exchange: str,
+) -> dict[str, dict[str, pd.DataFrame]]:
+    """Load candle data for multiple symbols in a single event loop."""
+    from smart_trader.data.storage.database import get_engine
+    from sqlalchemy import text
+
+    engine = get_engine()
+    datasets: dict[str, dict[str, pd.DataFrame]] = {}
+
+    for symbol in symbols:
+        data: dict[str, pd.DataFrame] = {}
+        for tf in ("1m", "1h", "4h"):
+            sql = text("""
+                SELECT time, open::double precision, high::double precision,
+                       low::double precision, close::double precision,
+                       volume::double precision
+                FROM candles
+                WHERE exchange = :ex AND symbol = :sym AND timeframe = :tf
+                ORDER BY time ASC
+            """)
+            async with engine.connect() as conn:
+                result = await conn.execute(sql, {"ex": exchange, "sym": symbol, "tf": tf})
+                rows = result.fetchall()
+            if rows:
+                df = pd.DataFrame(rows, columns=["time", "open", "high", "low", "close", "volume"])
+                df = df.set_index("time")
+                data[tf] = df
+                log.info("loaded", symbol=symbol, tf=tf, rows=len(df))
+        if data:
+            datasets[symbol] = data
+
+    return datasets
+
+
+def evaluate_fold(
+    agent, data_slice: dict[str, pd.DataFrame], fold: int, obs_dim: int,
+) -> dict:
+    """Run the agent in deterministic mode on a data slice."""
+    from smart_trader.data.features.engine import FeatureConfig, compute_features
+    from smart_trader.env.market_env import MarketEnv, MarketEnvConfig
+    from smart_trader.env.reward import RewardConfig
+    from smart_trader.env.spaces import SpaceConfig
+
+    sample_tf = list(data_slice.keys())[0]
+    sample_feats = compute_features(data_slice[sample_tf].head(50), FeatureConfig(), prefix="x_")
+    features_per_tf = len(sample_feats.columns)
+
+    space_cfg = SpaceConfig(
+        n_timeframes=len(data_slice),
+        features_per_tf=features_per_tf,
+    )
+    primary_tf = "1m" if "1m" in data_slice else list(data_slice.keys())[0]
+    max_bars = len(data_slice[primary_tf]) - 1
+
+    env_config = MarketEnvConfig(
+        data=data_slice,
+        primary_tf=primary_tf,
+        max_episode_bars=max_bars,
+        initial_cash=10_000.0,
+        space_config=space_cfg,
+        reward_config=RewardConfig(),
+    )
+
+    env = MarketEnv(env_config)
+    agent.set_deterministic(True)
+
+    obs, _ = env.reset()
+    done = False
+    total_reward = 0.0
+    steps = 0
+
+    while not done:
+        action, _, _ = agent.act(obs)
+        obs, reward, terminated, truncated, info = env.step(action)
+        total_reward += reward
+        steps += 1
+        done = terminated or truncated
+
+    return {
+        "fold": fold,
+        "steps": steps,
+        "total_reward": total_reward,
+        **info,
+    }
+
+
+def _run_symbol_folds(
+    agent, data: dict[str, pd.DataFrame], symbol: str, args,
+) -> list[dict]:
+    """Walk-forward folds for a single symbol."""
+    from smart_trader.data.features.engine import FeatureConfig, compute_features
+    from smart_trader.env.spaces import SpaceConfig
+
+    sample_feats = compute_features(data["1m"].head(50), FeatureConfig(), prefix="x_")
+    features_per_tf = len(sample_feats.columns)
+    space_cfg = SpaceConfig(n_timeframes=len(data), features_per_tf=features_per_tf)
+    obs_dim = (
+        space_cfg.n_timeframes * space_cfg.features_per_tf
+        + space_cfg.portfolio_dim
+        + space_cfg.microstructure_dim
+        + space_cfg.time_dim
+    )
+
+    bars_per_day = 24 * 60
+    test_bars = args.test_days * bars_per_day
+    total_1m = len(data["1m"])
+    results = []
+
+    for fold_idx in range(args.n_folds):
+        end_idx = total_1m - fold_idx * test_bars
+        start_idx = end_idx - test_bars
+        if start_idx < 200:
+            break
+
+        fold_data: dict[str, pd.DataFrame] = {}
+        for tf, df in data.items():
+            if tf == "1m":
+                fold_data[tf] = df.iloc[start_idx:end_idx]
+            else:
+                t_start = data["1m"].index[start_idx]
+                t_end = data["1m"].index[min(end_idx, len(data["1m"]) - 1)]
+                mask = (df.index >= t_start) & (df.index <= t_end)
+                fold_data[tf] = df.loc[mask]
+
+        if len(fold_data.get("1m", pd.DataFrame())) < 1000:
+            break
+
+        t0 = time.monotonic()
+        result = evaluate_fold(agent, fold_data, fold_idx, obs_dim)
+        result["elapsed"] = time.monotonic() - t0
+        result["symbol"] = symbol
+        results.append(result)
+
+        period_start = fold_data["1m"].index[0].strftime("%m/%d")
+        period_end = fold_data["1m"].index[-1].strftime("%m/%d")
+        period = f"{period_start} - {period_end}"
+        tr = result.get("total_return", 0)
+        sh = result.get("sharpe", 0)
+        md = result.get("max_dd", 0)
+        nt = result.get("n_trades", 0)
+        marker = "+" if tr > 0 else " "
+        print(f"  {fold_idx+1:>4}  {symbol:>10}  {period:>16}  "
+              f"{marker}{tr:>7.2%}  {sh:>8.2f}  {md:>7.2%}  {nt:>6}")
+
+    return results
+
+
+def main() -> None:
+    args = parse_args()
+
+    from smart_trader.agent.meta_controller import MetaController
+    from smart_trader.data.features.engine import FeatureConfig, compute_features
+    from smart_trader.env.spaces import SpaceConfig
+
+    all_data = asyncio.run(load_all_data(args.symbols, args.exchange))
+    all_data = {sym: d for sym, d in all_data.items() if "1m" in d}
+
+    if not all_data:
+        log.error("no_data_available")
+        return
+
+    first_data = list(all_data.values())[0]
+    sample_feats = compute_features(first_data["1m"].head(50), FeatureConfig(), prefix="x_")
+    features_per_tf = len(sample_feats.columns)
+    space_cfg = SpaceConfig(n_timeframes=len(first_data), features_per_tf=features_per_tf)
+    obs_dim = (
+        space_cfg.n_timeframes * space_cfg.features_per_tf
+        + space_cfg.portfolio_dim
+        + space_cfg.microstructure_dim
+        + space_cfg.time_dim
+    )
+
+    agent = MetaController(
+        obs_dim=obs_dim,
+        d_model=args.d_model,
+        n_heads=args.n_heads,
+        n_layers=args.n_layers,
+        device=args.device,
+    )
+    agent.load(args.checkpoint)
+    log.info("agent_loaded", checkpoint=args.checkpoint, obs_dim=obs_dim,
+             symbols=list(all_data.keys()))
+
+    total_folds = args.n_folds * len(all_data)
+    print(f"\n{'═'*80}")
+    print(f"  Walk-Forward Evaluation — {len(all_data)} symbols × {args.n_folds} folds × {args.test_days}d")
+    print(f"{'═'*80}")
+    print(f"  {'Fold':>4}  {'Symbol':>10}  {'Period':>16}  "
+          f"{'Return':>8}  {'Sharpe':>8}  {'MaxDD':>8}  {'Trades':>6}")
+    print(f"  {'─'*72}")
+
+    all_results: list[dict] = []
+    for sym, sym_data in all_data.items():
+        results = _run_symbol_folds(agent, sym_data, sym, args)
+        all_results.extend(results)
+
+    print(f"  {'─'*72}")
+
+    if all_results:
+        returns = [r.get("total_return", 0) for r in all_results]
+        sharpes = [r.get("sharpe", 0) for r in all_results]
+        max_dds = [r.get("max_dd", 0) for r in all_results]
+        win_rate = sum(1 for r in returns if r > 0) / len(returns)
+
+        print(f"\n  Overall ({len(all_results)} folds across {len(all_data)} symbols):")
+        print(f"    Mean return:   {np.mean(returns):>+.2%}")
+        print(f"    Std return:    {np.std(returns):>.2%}")
+        print(f"    Win rate:      {win_rate:.0%} ({sum(1 for r in returns if r > 0)}/{len(all_results)})")
+        print(f"    Mean Sharpe:   {np.mean(sharpes):.2f}")
+        print(f"    Mean MaxDD:    {np.mean(max_dds):.2%}")
+        print(f"    Best fold:     {max(returns):>+.2%}")
+        print(f"    Worst fold:    {min(returns):>+.2%}")
+
+        for sym in all_data:
+            sym_res = [r for r in all_results if r.get("symbol") == sym]
+            if not sym_res:
+                continue
+            sr = [r.get("total_return", 0) for r in sym_res]
+            wr = sum(1 for r in sr if r > 0) / len(sr)
+            print(f"\n  {sym} ({len(sym_res)} folds):")
+            print(f"    Mean return: {np.mean(sr):>+.2%}  Win rate: {wr:.0%}  "
+                  f"Mean MaxDD: {np.mean([r.get('max_dd', 0) for r in sym_res]):.2%}")
+
+    print(f"\n{'═'*80}\n")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,12 @@
+---
+description: RL 训练、环境与 checkpoint 约定
+globs: python/src/smart_trader/agent/**/*.py
+alwaysApply: false
+---
+
+# 强化学习
+
+- **训练入口**：`scripts/train_rl_agent.py`；多品种用 `--symbols A B`；checkpoint 目录用 `--checkpoint-dir`。
+- **评估**：`scripts/eval_walkforward.py --checkpoint …`；与训练使用相同的 `d_model` / `n_layers` / `n_heads`。
+- **环境**：`MarketEnv` / `RewardEngine` / `PPOTrainer` 修改后需保证 `obs_dim` 与 `MetaController` 一致；`act()` 返回的 action 字典需与环境 `step()` 期望的标量/形状一致。
+- **产物**：`.pt` 与 `python/checkpoints/` 已 gitignore；README 中说明用途即可，勿提交密钥或大文件。
