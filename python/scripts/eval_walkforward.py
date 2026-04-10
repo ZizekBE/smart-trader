@@ -10,17 +10,23 @@ Usage::
 
     uv run python scripts/eval_walkforward.py \
         --checkpoint ./checkpoints/binance_2m/checkpoint_635.pt
+
+Architecture flags default to the same values as ``train_rl_agent.py``.
+Checkpoints saved after this change embed ``n_layers`` / ``n_heads`` in
+``config``; older files fall back to counting ``encoder.layers.*`` keys.
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
+import re
 import sys
 import time
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import torch
 
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "src"))
@@ -41,9 +47,18 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--exchange", default="binance")
     p.add_argument("--test-days", type=int, default=7, help="Test window in days")
     p.add_argument("--n-folds", type=int, default=20, help="Number of test folds per symbol")
-    p.add_argument("--d-model", type=int, default=128)
-    p.add_argument("--n-layers", type=int, default=2)
-    p.add_argument("--n-heads", type=int, default=4)
+    p.add_argument(
+        "--d-model", type=int, default=64,
+        help="Transformer width (must match checkpoint; default matches train_rl_agent.py)",
+    )
+    p.add_argument(
+        "--n-layers", type=int, default=1,
+        help="Transformer depth (must match checkpoint; default matches train_rl_agent.py)",
+    )
+    p.add_argument(
+        "--n-heads", type=int, default=4,
+        help="Attention heads (must match checkpoint; default matches train_rl_agent.py)",
+    )
     p.add_argument("--device", default="cpu")
     return p.parse_args()
 
@@ -81,6 +96,52 @@ async def load_all_data(
             datasets[symbol] = data
 
     return datasets
+
+
+_LAYER_RE = re.compile(r"^backbone\.encoder\.layers\.(\d+)\.")
+
+
+def _infer_n_layers(state: dict) -> int | None:
+    idx: list[int] = []
+    for k in state:
+        m = _LAYER_RE.match(k)
+        if m:
+            idx.append(int(m.group(1)))
+    return (max(idx) + 1) if idx else None
+
+
+def resolve_arch_from_checkpoint(
+    path: Path, device: str, args: argparse.Namespace,
+) -> tuple[int, int, int, int | None]:
+    """Read d_model / n_layers / n_heads from checkpoint config or state_dict."""
+    ckpt = torch.load(path, map_location=device, weights_only=False)
+    cfg = ckpt.get("config") or {}
+    state = ckpt.get("model_state") or {}
+
+    d_model = int(cfg.get("d_model", args.d_model))
+    n_layers = cfg.get("n_layers")
+    if n_layers is not None:
+        n_layers = int(n_layers)
+    else:
+        n_layers = _infer_n_layers(state)
+    if n_layers is None:
+        n_layers = args.n_layers
+
+    n_heads = cfg.get("n_heads", args.n_heads)
+    n_heads = int(n_heads)
+
+    saved_obs = cfg.get("obs_dim")
+    if saved_obs is not None:
+        saved_obs = int(saved_obs)
+    log.info(
+        "checkpoint_arch",
+        path=str(path),
+        d_model=d_model,
+        n_layers=n_layers,
+        n_heads=n_heads,
+        obs_dim_saved=saved_obs,
+    )
+    return d_model, n_layers, n_heads, saved_obs
 
 
 def evaluate_fold(
@@ -136,7 +197,12 @@ def evaluate_fold(
 
 
 def _run_symbol_folds(
-    agent, data: dict[str, pd.DataFrame], symbol: str, args,
+    agent,
+    data: dict[str, pd.DataFrame],
+    symbol: str,
+    args,
+    *,
+    verbose: bool = True,
 ) -> list[dict]:
     """Walk-forward folds for a single symbol."""
     from smart_trader.data.features.engine import FeatureConfig, compute_features
@@ -190,10 +256,50 @@ def _run_symbol_folds(
         md = result.get("max_dd", 0)
         nt = result.get("n_trades", 0)
         marker = "+" if tr > 0 else " "
-        print(f"  {fold_idx+1:>4}  {symbol:>10}  {period:>16}  "
-              f"{marker}{tr:>7.2%}  {sh:>8.2f}  {md:>7.2%}  {nt:>6}")
+        if verbose:
+            print(f"  {fold_idx+1:>4}  {symbol:>10}  {period:>16}  "
+                  f"{marker}{tr:>7.2%}  {sh:>8.2f}  {md:>7.2%}  {nt:>6}")
 
     return results
+
+
+def summarize_fold_results(
+    all_results: list[dict], n_symbols: int,
+) -> dict[str, float | int]:
+    """Aggregate walk-forward metrics (same definitions as printed summary)."""
+    if not all_results:
+        return {}
+    returns = [float(r.get("total_return", 0)) for r in all_results]
+    sharpes = [float(r.get("sharpe", 0)) for r in all_results]
+    max_dds = [float(r.get("max_dd", 0)) for r in all_results]
+    wins = sum(1 for r in returns if r > 0)
+    return {
+        "n_folds": len(all_results),
+        "n_symbols": n_symbols,
+        "mean_return": float(np.mean(returns)),
+        "std_return": float(np.std(returns)),
+        "win_rate": wins / len(returns),
+        "wins": wins,
+        "mean_sharpe": float(np.mean(sharpes)),
+        "mean_max_dd": float(np.mean(max_dds)),
+        "best_fold": float(max(returns)),
+        "worst_fold": float(min(returns)),
+    }
+
+
+def run_walkforward_eval(
+    agent,
+    all_data: dict[str, dict[str, pd.DataFrame]],
+    args,
+    *,
+    verbose: bool = True,
+) -> list[dict]:
+    """Run all symbols × folds; optionally suppress per-fold lines (for sweeps)."""
+    all_results: list[dict] = []
+    for sym, sym_data in all_data.items():
+        results = _run_symbol_folds(agent, sym_data, sym, args, verbose=verbose)
+        all_results.extend(results)
+    return all_results
 
 
 def main() -> None:
@@ -221,18 +327,39 @@ def main() -> None:
         + space_cfg.time_dim
     )
 
+    ckpt_path = Path(args.checkpoint)
+    d_model, n_layers, n_heads, saved_obs = resolve_arch_from_checkpoint(
+        ckpt_path, args.device, args,
+    )
+    if saved_obs is not None and saved_obs != obs_dim:
+        log.warning(
+            "obs_dim_mismatch",
+            from_data=obs_dim,
+            from_checkpoint=saved_obs,
+        )
+
     agent = MetaController(
         obs_dim=obs_dim,
-        d_model=args.d_model,
-        n_heads=args.n_heads,
-        n_layers=args.n_layers,
+        d_model=d_model,
+        n_heads=n_heads,
+        n_layers=n_layers,
         device=args.device,
     )
-    agent.load(args.checkpoint)
+    try:
+        agent.load(ckpt_path)
+    except RuntimeError as e:
+        if "state_dict" in str(e) or "size mismatch" in str(e) or "Missing key" in str(e):
+            print(
+                "\n  Failed to load checkpoint — model shape does not match.\n"
+                "  Try explicit flags to match training, e.g.:\n"
+                "    --d-model 64 --n-layers 1 --n-heads 4\n"
+                "  (defaults now match train_rl_agent.py.)\n",
+                file=sys.stderr,
+            )
+        raise
     log.info("agent_loaded", checkpoint=args.checkpoint, obs_dim=obs_dim,
              symbols=list(all_data.keys()))
 
-    total_folds = args.n_folds * len(all_data)
     print(f"\n{'═'*80}")
     print(f"  Walk-Forward Evaluation — {len(all_data)} symbols × {args.n_folds} folds × {args.test_days}d")
     print(f"{'═'*80}")
@@ -240,27 +367,20 @@ def main() -> None:
           f"{'Return':>8}  {'Sharpe':>8}  {'MaxDD':>8}  {'Trades':>6}")
     print(f"  {'─'*72}")
 
-    all_results: list[dict] = []
-    for sym, sym_data in all_data.items():
-        results = _run_symbol_folds(agent, sym_data, sym, args)
-        all_results.extend(results)
+    all_results = run_walkforward_eval(agent, all_data, args, verbose=True)
 
     print(f"  {'─'*72}")
 
     if all_results:
-        returns = [r.get("total_return", 0) for r in all_results]
-        sharpes = [r.get("sharpe", 0) for r in all_results]
-        max_dds = [r.get("max_dd", 0) for r in all_results]
-        win_rate = sum(1 for r in returns if r > 0) / len(returns)
-
-        print(f"\n  Overall ({len(all_results)} folds across {len(all_data)} symbols):")
-        print(f"    Mean return:   {np.mean(returns):>+.2%}")
-        print(f"    Std return:    {np.std(returns):>.2%}")
-        print(f"    Win rate:      {win_rate:.0%} ({sum(1 for r in returns if r > 0)}/{len(all_results)})")
-        print(f"    Mean Sharpe:   {np.mean(sharpes):.2f}")
-        print(f"    Mean MaxDD:    {np.mean(max_dds):.2%}")
-        print(f"    Best fold:     {max(returns):>+.2%}")
-        print(f"    Worst fold:    {min(returns):>+.2%}")
+        agg = summarize_fold_results(all_results, len(all_data))
+        print(f"\n  Overall ({agg['n_folds']} folds across {len(all_data)} symbols):")
+        print(f"    Mean return:   {agg['mean_return']:>+.2%}")
+        print(f"    Std return:    {agg['std_return']:>.2%}")
+        print(f"    Win rate:      {agg['win_rate']:.0%} ({agg['wins']}/{agg['n_folds']})")
+        print(f"    Mean Sharpe:   {agg['mean_sharpe']:.2f}")
+        print(f"    Mean MaxDD:    {agg['mean_max_dd']:.2%}")
+        print(f"    Best fold:     {agg['best_fold']:>+.2%}")
+        print(f"    Worst fold:    {agg['worst_fold']:>+.2%}")
 
         for sym in all_data:
             sym_res = [r for r in all_results if r.get("symbol") == sym]

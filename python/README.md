@@ -121,7 +121,19 @@ uv run python scripts/run_hybrid_backtest.py
 
 ```bash
 uv run python scripts/train_rl_agent.py --symbols BTC/USDT ETH/USDT --exchange binance --timesteps 500000
-uv run python scripts/eval_walkforward.py --checkpoint ./checkpoints/xxx.pt --symbols BTC/USDT ETH/USDT
+uv run python scripts/eval_walkforward.py --checkpoint ./checkpoints/xxx.pt --symbols BTC/USDT ETH/USDT --exchange binance
+```
+
+训练脚本默认 **`--d-model 64 --n-layers 1 --n-heads 4`**。`eval_walkforward.py` 使用**相同默认**；保存 checkpoint 时会在 `config` 里写入 `d_model` / `n_layers` / `n_heads`（旧文件会从权重里推断层数）。若仍出现 `state_dict` 加载错误，请显式传入与训练一致的 `--d-model`、`--n-layers`、`--n-heads`。
+
+批量对比多个 checkpoint（早停探测，数据只加载一次）：
+
+```bash
+uv run python scripts/eval_checkpoint_sweep.py --checkpoint-dir ./checkpoints/rl_500k \
+  --symbols BTC/USDT ETH/USDT --exchange binance
+# 更密：`--grid dense`（stride=25）或 `--stride 25`；评全量编号文件：`--grid full`（等同 `--stride 0`，很慢）
+# 仅指定若干 update：`--pick 200 400 600 975 --no-final`（不要 final 时加 `--no-final`）
+# 默认 stride=50（在编号最小/最大与 `N%stride==0` 上取样），并附带 `final_agent.pt`。
 ```
 
 ### 6. 数据回补

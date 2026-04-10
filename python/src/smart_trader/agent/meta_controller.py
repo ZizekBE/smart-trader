@@ -86,11 +86,16 @@ class MetaController:
              extra: dict | None = None) -> None:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
+        enc = self.network.backbone.encoder
+        n_layers = len(enc.layers)
+        n_heads = int(enc.layers[0].self_attn.num_heads)
         payload = {
             "model_state": self.network.state_dict(),
             "config": {
                 "obs_dim": self.network.backbone.projection.in_features,
                 "d_model": self.network.backbone.output_dim,
+                "n_layers": n_layers,
+                "n_heads": n_heads,
             },
             "step": step,
         }

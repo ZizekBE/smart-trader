@@ -1,0 +1,14 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "smart-trader (TimescaleDB)",
+      "Group": "Servers",
+      "Host": "timescaledb",
+      "Port": 5432,
+      "MaintenanceDB": "smart_trader",
+      "Username": "trader",
+      "SSLMode": "prefer",
+      "PassFile": "/dev/null"
+    }
+  }
+}

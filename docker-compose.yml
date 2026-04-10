@@ -1,0 +1,168 @@
+version: "3.9"
+
+services:
+  # ── TimescaleDB (PostgreSQL + time-series extension) ─────────────────────
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: smart-trader-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-trader}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+      POSTGRES_DB: ${DB_NAME:-smart_trader}
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+      - ./infra/timescaledb/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-trader} -d ${DB_NAME:-smart_trader}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis (real-time state, signal cache, pub/sub) ────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: smart-trader-redis
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    ports:
+      - "16379:6379"  # 6379 occupied by redis-develop on host
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ── Prometheus (metrics scraping) ─────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: smart-trader-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+
+  # ── Grafana (dashboards) ──────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: smart-trader-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-changeme}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infra/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+
+  # ── pgAdmin (database GUI) ────────────────────────────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: smart-trader-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@smart-trader.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-changeme}
+      PGADMIN_CONFIG_SERVER_MODE: "False"       # single-user desktop mode
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      - ./infra/pgadmin/servers.json:/pgadmin4/servers.json:ro
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+
+  # ── Python API server (FastAPI) ───────────────────────────────────────────
+  api:
+    build:
+      context: ./python
+      dockerfile: ../infra/docker/Dockerfile.python
+    container_name: smart-trader-api
+    restart: unless-stopped
+    env_file: ./configs/envs/.env
+    environment:
+      DB_HOST: timescaledb
+      REDIS_HOST: redis
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./python/src:/app/src:ro
+      - ./configs:/app/configs:ro
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    command: >
+      uv run uvicorn smart_trader.api.server:app
+      --host 0.0.0.0 --port 8000 --reload
+
+  # ── Next.js UI ────────────────────────────────────────────────────────────
+  ui:
+    build:
+      context: ./ui
+      dockerfile: ../infra/docker/Dockerfile.ui
+    container_name: smart-trader-ui
+    restart: unless-stopped
+    environment:
+      API_URL: http://api:8000
+    ports:
+      - "3001:3001"
+    depends_on:
+      - api
+
+  # ── Python trading engine ─────────────────────────────────────────────────
+  trader-python:
+    build:
+      context: ./python
+      dockerfile: ../infra/docker/Dockerfile.python
+    container_name: smart-trader-python
+    restart: unless-stopped
+    env_file: ./configs/envs/.env
+    environment:
+      DB_HOST: timescaledb
+      REDIS_HOST: redis
+    volumes:
+      - ./python/src:/app/src:ro
+      - ./configs:/app/configs:ro
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uv run trader
+
+  # ── Rust execution engine ──────────────────────────────────────────────────
+  trader-rust:
+    build:
+      context: ./rust
+      dockerfile: ../infra/docker/Dockerfile.rust
+    container_name: smart-trader-rust
+    restart: unless-stopped
+    env_file: ./configs/envs/.env
+    environment:
+      REDIS_HOST: redis
+    ports:
+      - "8080:8080"   # internal gRPC / HTTP for Python ↔ Rust IPC
+    depends_on:
+      - redis
+
+volumes:
+  timescale_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+  pgadmin_data:

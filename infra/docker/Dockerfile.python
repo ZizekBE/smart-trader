@@ -1,0 +1,25 @@
+FROM python:3.11-slim AS base
+
+# System deps (ta-lib requires C library)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ libta-lib-dev curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.cargo/bin:$PATH"
+
+WORKDIR /app
+
+# Install dependencies (cached layer)
+COPY pyproject.toml uv.lock* ./
+RUN uv sync --frozen --no-dev
+
+# Copy source
+COPY src/ ./src/
+COPY configs/ ./configs/
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+CMD ["uv", "run", "trader"]
