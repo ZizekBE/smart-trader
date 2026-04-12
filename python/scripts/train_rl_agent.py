@@ -49,6 +49,8 @@ def parse_args() -> argparse.Namespace:
                     help="Early-stop after this many evals without best_eval improvement")
     p.add_argument("--weight-decay", type=float, default=1e-5,
                     help="AdamW L2 (stronger e.g. 3e-5 can reduce OOS variance for seq obs)")
+    p.add_argument("--trade-penalty", type=float, default=0.01,
+                    help="RewardEngine churn penalty per trade (higher = less frequent trades)")
     p.add_argument("--checkpoint-dir", default="./checkpoints")
     p.add_argument("--resume", default=None, help="Path to checkpoint .pt to resume from")
     p.add_argument("--exchange", default=None, help="Filter by exchange (binance, gateio)")
@@ -148,7 +150,7 @@ def train(args: argparse.Namespace, datasets: dict[str, dict[str, pd.DataFrame]]
         max_episode_bars=max_episode,
         initial_cash=10_000.0,
         space_config=space_cfg,
-        reward_config=RewardConfig(),
+        reward_config=RewardConfig(trade_penalty=args.trade_penalty),
     )
 
     env = MarketEnv(env_config)
@@ -216,6 +218,7 @@ def train(args: argparse.Namespace, datasets: dict[str, dict[str, pd.DataFrame]]
     print(f"  params:     {param_count:,}")
     print(f"  patience:   {args.patience}")
     print(f"  weight_dec: {args.weight_decay}")
+    print(f"  trade_pen:  {args.trade_penalty}")
     print(f"  n_steps:    {args.n_steps}")
     print(f"  batch_size: {args.batch_size}")
     print(f"  max_episode:{max_episode}")
