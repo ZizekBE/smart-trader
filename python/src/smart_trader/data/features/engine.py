@@ -55,53 +55,50 @@ def compute_features(
     feats[f"{p}ret_1"] = c.pct_change(1)
     feats[f"{p}ret_5"] = c.pct_change(5)
 
-    # --- EMAs ---
+    # --- EMAs (ratio only — no raw price-scale values) ---
     for period in cfg.ema_periods:
         e = ema(c, period)
-        feats[f"{p}ema_{period}"] = e
         feats[f"{p}ema_{period}_dist"] = (c - e) / (e + 1e-9)
 
-    # --- RSI ---
+    # --- RSI (0-1 scaled) ---
     delta = c.diff()
     gain = delta.clip(lower=0).ewm(span=cfg.rsi_period, adjust=False).mean()
     loss = (-delta.clip(upper=0)).ewm(span=cfg.rsi_period, adjust=False).mean()
     rs = gain / (loss + 1e-9)
-    feats[f"{p}rsi"] = 100 - 100 / (1 + rs)
+    feats[f"{p}rsi"] = (100 - 100 / (1 + rs)) / 100.0
 
-    # --- MACD ---
+    # --- MACD (normalised by close) ---
     ema_fast = ema(c, cfg.macd_fast)
     ema_slow = ema(c, cfg.macd_slow)
     macd_line = ema_fast - ema_slow
     signal_line = ema(macd_line, cfg.macd_signal)
-    feats[f"{p}macd"] = macd_line
-    feats[f"{p}macd_signal"] = signal_line
-    feats[f"{p}macd_hist"] = macd_line - signal_line
+    feats[f"{p}macd_pct"] = macd_line / (c + 1e-9)
+    feats[f"{p}macd_signal_pct"] = signal_line / (c + 1e-9)
+    feats[f"{p}macd_hist_pct"] = (macd_line - signal_line) / (c + 1e-9)
 
-    # --- Bollinger Bands ---
+    # --- Bollinger Bands (normalised) ---
     bb_mid = c.rolling(cfg.bb_period).mean()
     bb_std = c.rolling(cfg.bb_period).std()
-    feats[f"{p}bb_upper"] = bb_mid + cfg.bb_std * bb_std
-    feats[f"{p}bb_lower"] = bb_mid - cfg.bb_std * bb_std
     feats[f"{p}bb_width"] = (2 * cfg.bb_std * bb_std) / (bb_mid + 1e-9)
     feats[f"{p}bb_pct"] = (c - (bb_mid - cfg.bb_std * bb_std)) / (2 * cfg.bb_std * bb_std + 1e-9)
 
-    # --- ATR ---
+    # --- ATR (ratio only) ---
     prev_c = c.shift(1)
     tr = pd.concat([h - l, (h - prev_c).abs(), (l - prev_c).abs()], axis=1).max(axis=1)
     atr_val = tr.ewm(span=cfg.atr_period, adjust=False).mean()
-    feats[f"{p}atr"] = atr_val
     feats[f"{p}atr_pct"] = atr_val / (c + 1e-9)
 
-    # --- ADX ---
+    # --- ADX (0-1 scaled) ---
     adx_val, di_plus, di_minus = adx(h, l, c, cfg.adx_period)
-    feats[f"{p}adx"] = adx_val
-    feats[f"{p}di_plus"] = di_plus
-    feats[f"{p}di_minus"] = di_minus
+    feats[f"{p}adx"] = adx_val / 100.0
+    feats[f"{p}di_plus"] = di_plus / 100.0
+    feats[f"{p}di_minus"] = di_minus / 100.0
 
-    # --- OBV ---
+    # --- OBV (normalised slope) ---
     if cfg.obv:
         obv_val = obv(c, v)
-        feats[f"{p}obv_slope"] = linear_slope(obv_val, cfg.slope_window)
+        raw_slope = linear_slope(obv_val, cfg.slope_window)
+        feats[f"{p}obv_slope_norm"] = raw_slope / (v.rolling(cfg.slope_window).mean() + 1e-9)
 
     # --- VWAP ---
     if cfg.vwap:
@@ -111,12 +108,11 @@ def compute_features(
         vwap_val = cum_tpv / (cum_v + 1e-9)
         feats[f"{p}vwap_dist"] = (c - vwap_val) / (vwap_val + 1e-9)
 
-    # --- Volume features ---
-    feats[f"{p}vol_sma_20"] = v.rolling(20).mean()
+    # --- Volume features (ratio only) ---
     feats[f"{p}vol_ratio"] = v / (v.rolling(20).mean() + 1e-9)
 
-    # --- Trend slope ---
-    feats[f"{p}price_slope"] = linear_slope(c, cfg.slope_window)
+    # --- Trend slope (normalised by close) ---
+    feats[f"{p}price_slope_pct"] = linear_slope(c, cfg.slope_window) / (c + 1e-9)
 
     return pd.DataFrame(feats, index=df.index)
 

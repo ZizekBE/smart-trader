@@ -121,12 +121,11 @@ class InferenceService:
         inputs = {"observation": obs.reshape(1, -1).astype(np.float32)}
         outputs = self._ort_session.run(None, inputs)
         action = {
-            "regime": int(outputs[0].argmax()),
-            "position": np.clip(outputs[1].flatten(), -1, 1),
-            "risk_budget": np.clip(outputs[2].flatten(), 0.01, 0.10),
-            "hold_bars": int(outputs[3].argmax()),
+            "position": np.clip(outputs[0].flatten(), -1, 1),
+            "risk_budget": np.clip(outputs[1].flatten(), 0.01, 0.10),
+            "hold_bars": int(outputs[2].argmax()),
         }
-        value = float(outputs[5].item()) if len(outputs) > 5 else 0.0
+        value = float(outputs[4].item()) if len(outputs) > 4 else 0.0
         return action, value
 
     def _predict_torchscript(self, obs: np.ndarray) -> tuple[dict, float]:
@@ -145,7 +144,6 @@ class InferenceService:
     @staticmethod
     def _default_action() -> dict:
         return {
-            "regime": 3,  # uncertain
             "position": np.array([0.0]),
             "risk_budget": np.array([0.02]),
             "hold_bars": 0,
@@ -189,7 +187,6 @@ class ShadowMode:
         self._records.append(record)
         self._log.debug(
             "shadow_decision",
-            regime=result.action.get("regime"),
             position=float(np.atleast_1d(result.action.get("position", 0))[0]),
             value=f"{result.value_estimate:.4f}",
             latency_ms=f"{result.latency_ms:.1f}",
@@ -211,12 +208,7 @@ class ShadowMode:
             "n_records": len(self._records),
             "n_with_outcomes": len(outcomes),
             "agent_mean_value": float(np.mean([r.agent_value for r in self._records])),
-            "regime_distribution": self._regime_dist(),
         }
-
-    def _regime_dist(self) -> dict[int, int]:
-        from collections import Counter
-        return dict(Counter(r.agent_action.get("regime", -1) for r in self._records))
 
     def clear(self) -> None:
         self._records.clear()

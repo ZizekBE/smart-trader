@@ -50,6 +50,23 @@ class CandleRepository:
         result = await self._s.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_earliest_time(
+        self, symbol: str, exchange: str, timeframe: str
+    ) -> Optional[datetime]:
+        """Return the timestamp of the earliest stored candle, or None."""
+        stmt = (
+            select(Candle.time)
+            .where(
+                Candle.symbol == symbol,
+                Candle.exchange == exchange,
+                Candle.timeframe == timeframe,
+            )
+            .order_by(Candle.time.asc())
+            .limit(1)
+        )
+        result = await self._s.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def get_range(
         self,
         symbol: str,

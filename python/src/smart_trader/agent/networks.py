@@ -11,7 +11,6 @@ from typing import Tuple
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.distributions import Categorical, Normal
 
 
@@ -40,7 +39,7 @@ class TransformerBackbone(nn.Module):
         d_model: int = 128,
         n_heads: int = 4,
         n_layers: int = 2,
-        dropout: float = 0.1,
+        dropout: float = 0.05,
     ) -> None:
         super().__init__()
         self.projection = nn.Linear(input_dim, d_model)
@@ -69,18 +68,21 @@ class TransformerBackbone(nn.Module):
 
 
 class PolicyHead(nn.Module):
-    """Hybrid policy head outputting discrete + continuous actions.
+    """Hybrid policy head outputting continuous + discrete actions.
 
     Outputs:
-      - regime logits:  (batch, 4) — categorical over {up, down, range, uncertain}
-      - position mu/sigma: (batch, 1) each — Gaussian for target position [-1, 1]
+      - position mu/sigma: (batch, 1) each — tanh-squashed Gaussian for [-1, 1]
       - risk mu/sigma:  (batch, 1) each — Gaussian for risk budget [0.01, 0.10]
-      - hold logits:    (batch, 3) — categorical over {1h, 4h, 1d}
+      - hold logits:    (batch, 3) — categorical over {15m, 1h, 4h}
     """
 
-    def __init__(self, d_model: int = 128) -> None:
+    def __init__(self, d_model: int = 128, dropout: float = 0.05) -> None:
         super().__init__()
-        self.regime_head = nn.Linear(d_model, 4)
+        self.shared = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.GELU(),
+            nn.Dropout(dropout),
+        )
         self.position_mu = nn.Linear(d_model, 1)
         self.position_log_std = nn.Parameter(torch.zeros(1))
         self.risk_mu = nn.Linear(d_model, 1)
@@ -88,22 +90,24 @@ class PolicyHead(nn.Module):
         self.hold_head = nn.Linear(d_model, 3)
 
     def forward(self, features: torch.Tensor):
-        regime_logits = self.regime_head(features)
-        pos_mu = torch.tanh(self.position_mu(features))
+        features = self.shared(features)
+        pos_mu = self.position_mu(features)
         pos_std = torch.exp(self.position_log_std).expand_as(pos_mu)
         risk_mu = torch.sigmoid(self.risk_mu(features)) * 0.09 + 0.01
         risk_std = torch.exp(self.risk_log_std).expand_as(risk_mu)
         hold_logits = self.hold_head(features)
-        return regime_logits, pos_mu, pos_std, risk_mu, risk_std, hold_logits
+        return pos_mu, pos_std, risk_mu, risk_std, hold_logits
+
+    @staticmethod
+    def _tanh_log_prob_correction(raw: torch.Tensor) -> torch.Tensor:
+        """Jacobian correction for tanh squashing: -log(1 - tanh^2(x))."""
+        return -torch.log(1.0 - torch.tanh(raw).pow(2) + 1e-6)
 
     def sample(
         self, features: torch.Tensor,
     ) -> Tuple[dict, torch.Tensor]:
         """Sample actions and compute log-probabilities."""
-        regime_logits, pos_mu, pos_std, risk_mu, risk_std, hold_logits = self(features)
-
-        regime_dist = Categorical(logits=regime_logits)
-        regime = regime_dist.sample()
+        pos_mu, pos_std, risk_mu, risk_std, hold_logits = self(features)
 
         pos_dist = Normal(pos_mu, pos_std)
         pos_raw = pos_dist.sample()
@@ -117,17 +121,18 @@ class PolicyHead(nn.Module):
         hold = hold_dist.sample()
 
         log_prob = (
-            regime_dist.log_prob(regime)
-            + pos_dist.log_prob(pos_raw).sum(-1)
+            pos_dist.log_prob(pos_raw).sum(-1)
+            - self._tanh_log_prob_correction(pos_raw).sum(-1)
             + risk_dist.log_prob(risk_raw).sum(-1)
             + hold_dist.log_prob(hold)
         )
 
         action = {
-            "regime": regime.cpu().numpy(),
             "position": position.cpu().detach().numpy(),
             "risk_budget": risk_budget.cpu().detach().numpy(),
             "hold_bars": hold.cpu().numpy(),
+            "_pos_raw": pos_raw.cpu().detach().numpy(),
+            "_risk_raw": risk_raw.cpu().detach().numpy(),
         }
         return action, log_prob
 
@@ -135,27 +140,24 @@ class PolicyHead(nn.Module):
         self, features: torch.Tensor, actions: dict,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Compute log-prob and entropy for given actions (for PPO update)."""
-        regime_logits, pos_mu, pos_std, risk_mu, risk_std, hold_logits = self(features)
+        pos_mu, pos_std, risk_mu, risk_std, hold_logits = self(features)
 
-        regime_dist = Categorical(logits=regime_logits)
         pos_dist = Normal(pos_mu, pos_std)
         risk_dist = Normal(risk_mu, risk_std)
         hold_dist = Categorical(logits=hold_logits)
 
-        regime_t = torch.as_tensor(actions["regime"], dtype=torch.long, device=features.device)
-        pos_t = torch.as_tensor(actions["position"], dtype=torch.float32, device=features.device)
-        risk_t = torch.as_tensor(actions["risk_budget"], dtype=torch.float32, device=features.device)
+        pos_raw_t = torch.as_tensor(actions["_pos_raw"], dtype=torch.float32, device=features.device)
+        risk_raw_t = torch.as_tensor(actions["_risk_raw"], dtype=torch.float32, device=features.device)
         hold_t = torch.as_tensor(actions["hold_bars"], dtype=torch.long, device=features.device)
 
         log_p = (
-            regime_dist.log_prob(regime_t)
-            + pos_dist.log_prob(pos_t).sum(-1)
-            + risk_dist.log_prob(risk_t).sum(-1)
+            pos_dist.log_prob(pos_raw_t).sum(-1)
+            - self._tanh_log_prob_correction(pos_raw_t).sum(-1)
+            + risk_dist.log_prob(risk_raw_t).sum(-1)
             + hold_dist.log_prob(hold_t)
         )
         entropy = (
-            regime_dist.entropy()
-            + pos_dist.entropy().sum(-1)
+            pos_dist.entropy().sum(-1)
             + risk_dist.entropy().sum(-1)
             + hold_dist.entropy()
         )
@@ -165,11 +167,12 @@ class PolicyHead(nn.Module):
 class ValueHead(nn.Module):
     """Value function head — predicts expected return."""
 
-    def __init__(self, d_model: int = 128) -> None:
+    def __init__(self, d_model: int = 128, dropout: float = 0.05) -> None:
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(d_model, d_model),
             nn.GELU(),
+            nn.Dropout(dropout),
             nn.Linear(d_model, 1),
         )
 

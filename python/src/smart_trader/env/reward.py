@@ -2,8 +2,8 @@
 
 Implements the composite reward function:
 
-    R_t = α·risk_adjusted_return + β·drawdown_penalty
-        + γ·trading_cost_penalty  + δ·holding_bonus
+    R_t = scaled_pnl (asymmetric) + β·drawdown_penalty
+        + γ·cost_penalty + churn_penalty
 
 All components are bounded to prevent extreme values that destabilise
 PPO's value function.  An optional RunningNormalizer can wrap the
@@ -18,18 +18,16 @@ import numpy as np
 
 @dataclass
 class RewardConfig:
-    alpha: float = 1.0        # risk-adjusted return weight
-    beta: float = 0.5         # drawdown penalty weight
-    gamma: float = 0.3        # trading cost penalty weight
-    delta: float = 0.05       # holding bonus weight
-    trade_penalty: float = 0.15  # flat penalty per trade (discourages churn)
+    pnl_scale: float = 40.0          # scale raw step return to useful magnitude
+    loss_aversion: float = 1.3       # multiply penalty for negative returns (asymmetric)
+    beta: float = 0.5                # drawdown penalty weight
+    gamma: float = 0.2               # trading cost penalty weight
+    trade_penalty: float = 0.01      # flat penalty per trade (discourages churn)
 
     dd_threshold: float = 0.05       # drawdown % at which penalty kicks in
     dd_exponent: float = 2.0         # non-linear drawdown penalty exponent
-    sortino_window: int = 20         # lookback for Sortino calculation
-    target_return: float = 0.0       # Sortino minimum acceptable return
 
-    clip_reward: float = 10.0        # symmetric per-step reward clip
+    clip_reward: float = 3.0         # symmetric per-step reward clip
 
 
 @dataclass
@@ -62,15 +60,17 @@ class RewardEngine:
     ) -> float:
         """Compute reward for a single environment step.
 
-        All sub-components are bounded so the raw reward stays in
-        a reasonable range even under extreme market moves or leverage.
+        Uses scaled PnL with asymmetric loss aversion instead of
+        Sortino to avoid instability from dividing by near-zero
+        downside deviation.
         """
         step_return = (portfolio_value - prev_value) / (prev_value + 1e-9)
         self.state.returns.append(step_return)
 
-        # --- risk-adjusted return (incremental Sortino) ---
-        risk_adj = self._sortino_increment(step_return)
-        risk_adj = float(np.clip(risk_adj, -5.0, 5.0))
+        # --- asymmetric scaled PnL ---
+        pnl_reward = step_return * self.cfg.pnl_scale
+        if step_return < 0:
+            pnl_reward *= self.cfg.loss_aversion
 
         # --- drawdown penalty (bounded) ---
         self.state.peak_value = max(self.state.peak_value, portfolio_value)
@@ -84,38 +84,22 @@ class RewardEngine:
         self.state.cumulative_costs += trade_cost
         cost_penalty = 0.0
         if did_trade:
-            cost_penalty = -trade_cost / (prev_value + 1e-9)
-            cost_penalty = max(cost_penalty, -1.0)
+            cost_penalty = -trade_cost / (prev_value + 1e-9) * self.cfg.pnl_scale
+            cost_penalty = max(cost_penalty, -2.0)
             self.state.n_trades += 1
 
-        # --- holding bonus ---
-        holding_bonus = 0.0
         if position_held:
             self.state.holding_steps += 1
-            holding_bonus = self.cfg.delta
 
-        # flat penalty each time a trade fires — makes agent think twice
         churn_penalty = -self.cfg.trade_penalty if did_trade else 0.0
 
         reward = (
-            self.cfg.alpha * risk_adj
+            pnl_reward
             + self.cfg.beta * dd_penalty
             + self.cfg.gamma * cost_penalty
-            + holding_bonus
             + churn_penalty
         )
         return float(np.clip(reward, -self.cfg.clip_reward, self.cfg.clip_reward))
-
-    def _sortino_increment(self, step_return: float) -> float:
-        """Incremental Sortino-style risk-adjusted return."""
-        returns = self.state.returns
-        if len(returns) < 2:
-            return float(np.clip(step_return * 100, -5.0, 5.0))
-
-        window = returns[-self.cfg.sortino_window:]
-        downside = [min(r - self.cfg.target_return, 0) for r in window]
-        downside_dev = float(np.sqrt(np.mean(np.square(downside)) + 1e-9))
-        return step_return / (downside_dev + 1e-4)
 
     def get_episode_stats(self) -> dict:
         """Summary metrics for the completed episode."""
@@ -162,6 +146,20 @@ class RunningNormalizer:
         self._ret = reward + self._gamma * self._ret * (1.0 - float(done))
         self._update(self._ret)
         return float(self._ret / (np.sqrt(self._var) + self._eps))
+
+    def state_dict(self) -> dict:
+        return {
+            "mean": self._mean,
+            "var": self._var,
+            "count": self._count,
+            "ret": self._ret,
+        }
+
+    def load_state_dict(self, d: dict) -> None:
+        self._mean = d["mean"]
+        self._var = d["var"]
+        self._count = d["count"]
+        self._ret = d["ret"]
 
     def _update(self, val: float) -> None:
         self._count += 1

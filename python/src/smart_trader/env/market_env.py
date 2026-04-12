@@ -34,7 +34,6 @@ from smart_trader.env.simulator import (
 from smart_trader.env.spaces import SpaceConfig, build_action_space, build_observation_space
 
 _HOLD_BARS_MAP = {0: 15, 1: 60, 2: 240}  # 15m / 1h / 4h in 1m bars
-_REGIME_NAMES = ["trending_up", "trending_down", "ranging", "uncertain"]
 
 
 @dataclass
@@ -97,7 +96,6 @@ class MarketEnv(gym.Env):
         risk_budget = float(np.asarray(action["risk_budget"]).flat[0])
         risk_budget = float(np.clip(risk_budget, 0.01, 0.10))
         hold_bars = _HOLD_BARS_MAP.get(int(np.asarray(action["hold_bars"]).flat[0]), 1)
-        regime = int(np.asarray(action["regime"]).flat[0])
 
         total_cost = 0.0
         did_trade = False
@@ -116,7 +114,6 @@ class MarketEnv(gym.Env):
             self._step += 1
 
         curr_value = self._portfolio_value()
-        self._reward_engine.state.holding_steps += hold_bars if self._position.is_open else 0
 
         reward = self._reward_engine.step(
             portfolio_value=curr_value,
@@ -129,7 +126,6 @@ class MarketEnv(gym.Env):
         terminated = self._check_terminated()
         truncated = self._step >= self._max_step
 
-        self._regime_history.append(regime)
         obs = self._get_observation()
         return obs, reward, terminated, truncated, self._info()
 
@@ -138,12 +134,15 @@ class MarketEnv(gym.Env):
     def _reset_state(self) -> None:
         self._cash = self.cfg.initial_cash
         self._position = Position(symbol="", side="flat")
-        self._step = self._warmup_bars
-        self._max_step = min(
-            len(self._primary_data) - 1,
-            self._warmup_bars + self.cfg.max_episode_bars,
-        )
-        self._regime_history: list[int] = []
+
+        data_len = len(self._primary_data) - 1
+        latest_start = max(self._warmup_bars, data_len - self.cfg.max_episode_bars)
+        if latest_start > self._warmup_bars:
+            self._step = int(self._rng.integers(self._warmup_bars, latest_start + 1))
+        else:
+            self._step = self._warmup_bars
+
+        self._max_step = min(data_len, self._step + self.cfg.max_episode_bars)
         self._trade_log: list[dict] = []
         self._reward_engine.reset(self.cfg.initial_cash)
 
@@ -229,8 +228,8 @@ class MarketEnv(gym.Env):
             dd,
         ], dtype=np.float32))
 
-        # microstructure (placeholder — filled from real data in production)
-        parts.append(np.zeros(sc.microstructure_dim, dtype=np.float32))
+        if sc.microstructure_dim > 0:
+            parts.append(np.zeros(sc.microstructure_dim, dtype=np.float32))
 
         # time embedding
         if self._step < len(self._primary_data):
@@ -275,7 +274,8 @@ class MarketEnv(gym.Env):
             current_notional = sign * self._position.size * bar["close"]
 
         diff = target_notional - current_notional
-        if abs(diff) < total * 0.03:  # 3% dead zone to suppress churn
+        scale = max(abs(current_notional), abs(target_notional), total)
+        if abs(diff) < scale * 0.10:
             return 0.0, False
 
         price = bar["close"]
@@ -300,17 +300,22 @@ class MarketEnv(gym.Env):
     def _apply_fill(self, side: str, qty: float, price: float, cost: float) -> None:
         """Update position and cash after a fill."""
         if not self._position.is_open:
+            notional = qty * price
+            max_lev = self.cfg.max_leverage if self.cfg.leverage_enabled else 1.0
+            leverage = min(notional / (self._cash + 1e-9), max_lev)
+            leverage = max(leverage, 1.0)
+
             self._position.side = "long" if side == "buy" else "short"
             self._position.size = qty
             self._position.entry_price = price
-            self._position.leverage = 1.0
+            self._position.leverage = leverage
             self._cash -= cost
-            if self._position.leverage <= 1.0:
-                self._cash -= qty * price
+            if leverage <= 1.0:
+                self._cash -= notional
             else:
-                margin = qty * price / self._position.leverage
+                margin = notional / leverage
                 self._position.margin = margin
-                self._cash -= margin + cost
+                self._cash -= margin
             return
 
         same_side = (
@@ -360,7 +365,7 @@ class MarketEnv(gym.Env):
 
     def _check_terminated(self) -> bool:
         val = self._portfolio_value()
-        if val <= self.cfg.initial_cash * 0.5:
+        if val <= self.cfg.initial_cash * 0.70:
             return True
         if self._position.is_open:
             bar = self._get_bar(min(self._step, len(self._primary_data) - 1))

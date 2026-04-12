@@ -47,6 +47,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--resume", default=None, help="Path to checkpoint .pt to resume from")
     p.add_argument("--exchange", default=None, help="Filter by exchange (binance, gateio)")
     p.add_argument("--device", default="cpu", choices=["cpu", "cuda", "mps"])
+    p.add_argument("--per-symbol", action="store_true",
+                    help="Train a separate model for each symbol")
     return p.parse_args()
 
 
@@ -176,6 +178,9 @@ def train(args: argparse.Namespace, datasets: dict[str, dict[str, pd.DataFrame]]
         batch_size=args.batch_size,
         n_epochs=4,
         entropy_coef=0.02,
+        eval_freq=5,
+        eval_episodes=5,
+        patience=5,
     )
 
     trainer = PPOTrainer(env, agent, ppo_config)
@@ -184,6 +189,9 @@ def train(args: argparse.Namespace, datasets: dict[str, dict[str, pd.DataFrame]]
     if args.resume:
         meta = agent.load(args.resume, optimizer=trainer.optimizer)
         resume_step = meta.get("step", 0)
+        rn_state = meta.get("reward_norm")
+        if rn_state:
+            trainer._reward_norm.load_state_dict(rn_state)
         log.info("resumed_from_checkpoint", path=args.resume, step=resume_step)
 
     sym_str = ", ".join(datasets.keys())
@@ -218,11 +226,13 @@ def train(args: argparse.Namespace, datasets: dict[str, dict[str, pd.DataFrame]]
     # report
     updates = stats.get("updates", [])
     print(f"\n{'═'*60}")
-    print(f"  Training Complete — {elapsed:.1f}s")
+    status = "Early Stopped" if stats.get("stopped_early") else "Complete"
+    print(f"  Training {status} — {elapsed:.1f}s")
     print(f"{'═'*60}")
     print(f"  Total updates:   {stats.get('total_updates', 0)}")
     print(f"  Mean reward:     {stats.get('mean_reward', 0):.4f}")
     print(f"  Std reward:      {stats.get('std_reward', 0):.4f}")
+    print(f"  Best eval reward:{stats.get('best_eval_reward', 0):.4f}")
     print(f"  Saved to:        {save_path}")
 
     if updates:
@@ -246,7 +256,15 @@ def main() -> None:
         log.error("no_data_available", hint="Run: uv run python scripts/backfill_data.py first")
         return
 
-    train(args, datasets)
+    if args.per_symbol:
+        base_dir = args.checkpoint_dir
+        for sym in datasets:
+            safe = sym.replace("/", "_")
+            args.checkpoint_dir = f"{base_dir}/{safe}"
+            log.info("per_symbol_training", symbol=sym)
+            train(args, {sym: datasets[sym]})
+    else:
+        train(args, datasets)
 
 
 if __name__ == "__main__":

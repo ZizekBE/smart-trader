@@ -26,7 +26,6 @@ from smart_trader.execution.risk_guard import RiskGuard, RiskLimits
 
 log = structlog.get_logger(__name__)
 
-_REGIME_NAMES = ["trending_up", "trending_down", "ranging", "uncertain"]
 
 
 class RLTradingLoop:
@@ -97,14 +96,12 @@ class RLTradingLoop:
             result = self._inference.predict(obs)
             action = result.action
 
-            regime = action.get("regime", 3)
             target_pos = float(np.atleast_1d(action.get("position", 0))[0])
             risk_budget = float(np.atleast_1d(action.get("risk_budget", 0.02))[0])
 
             self._log.info(
                 "agent_decision",
                 symbol=symbol,
-                regime=_REGIME_NAMES[regime],
                 target_pos=f"{target_pos:+.3f}",
                 risk_budget=f"{risk_budget:.3f}",
                 value=f"{result.value_estimate:.4f}",

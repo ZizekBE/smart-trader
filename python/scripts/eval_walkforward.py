@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import re
 import sys
 import time
@@ -60,6 +61,11 @@ def parse_args() -> argparse.Namespace:
         help="Attention heads (must match checkpoint; default matches train_rl_agent.py)",
     )
     p.add_argument("--device", default="cpu")
+    p.add_argument(
+        "--output", default=None,
+        help="Path to save results (CSV if .csv, JSON otherwise). "
+             "Auto-generated next to checkpoint when omitted.",
+    )
     return p.parse_args()
 
 
@@ -287,6 +293,23 @@ def summarize_fold_results(
     }
 
 
+def save_eval_results(
+    all_results: list[dict],
+    summary: dict,
+    output_path: Path,
+) -> None:
+    """Persist fold-level results and aggregate summary."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_path.suffix == ".csv":
+        df = pd.DataFrame(all_results)
+        df.to_csv(output_path, index=False)
+    else:
+        payload = {"summary": summary, "folds": all_results}
+        with open(output_path, "w") as f:
+            json.dump(payload, f, indent=2, default=str)
+    log.info("results_saved", path=str(output_path))
+
+
 def run_walkforward_eval(
     agent,
     all_data: dict[str, dict[str, pd.DataFrame]],
@@ -391,6 +414,13 @@ def main() -> None:
             print(f"\n  {sym} ({len(sym_res)} folds):")
             print(f"    Mean return: {np.mean(sr):>+.2%}  Win rate: {wr:.0%}  "
                   f"Mean MaxDD: {np.mean([r.get('max_dd', 0) for r in sym_res]):.2%}")
+
+        out_path = args.output
+        if out_path is None:
+            out_path = ckpt_path.with_suffix(".eval.json")
+        else:
+            out_path = Path(out_path)
+        save_eval_results(all_results, agg, out_path)
 
     print(f"\n{'═'*80}\n")
 

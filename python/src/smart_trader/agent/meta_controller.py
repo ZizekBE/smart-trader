@@ -7,7 +7,6 @@ and production (deterministic, exported to ONNX/TorchScript).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import torch
@@ -38,7 +37,9 @@ class MetaController:
     # ── action selection ───────────────────────────────────────
 
     @torch.no_grad()
-    def act(self, obs: np.ndarray) -> tuple[dict, float, float]:
+    def act(
+        self, obs: np.ndarray, deterministic: bool = False,
+    ) -> tuple[dict, float, float]:
         """Select action from observation.
 
         Returns:
@@ -47,7 +48,7 @@ class MetaController:
         obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
         features = self.network.backbone(obs_t)
 
-        if self._deterministic:
+        if deterministic or self._deterministic:
             action = self._deterministic_action(features)
             log_prob = 0.0
         else:
@@ -60,22 +61,27 @@ class MetaController:
         action_out: dict = {}
         for k, v in action.items():
             if isinstance(v, np.ndarray):
-                if k in ("regime", "hold_bars"):
+                if k == "hold_bars":
                     action_out[k] = int(v.flat[0])
                 else:
                     action_out[k] = v.flatten().astype(np.float32)
             else:
                 action_out[k] = v
+
+        # keep pre-squash values for PPO log-prob consistency
+        if "_pos_raw" not in action_out:
+            action_out["_pos_raw"] = np.zeros(1, dtype=np.float32)
+        if "_risk_raw" not in action_out:
+            action_out["_risk_raw"] = np.zeros(1, dtype=np.float32)
         return action_out, log_prob, value
 
     def set_deterministic(self, flag: bool = True) -> None:
         self._deterministic = flag
 
     def _deterministic_action(self, features: torch.Tensor) -> dict:
-        regime_logits, pos_mu, _, risk_mu, _, hold_logits = self.network.policy(features)
+        pos_mu, _, risk_mu, _, hold_logits = self.network.policy(features)
         return {
-            "regime": int(regime_logits.argmax(-1).item()),
-            "position": np.clip(pos_mu.cpu().numpy().flatten(), -1, 1),
+            "position": np.clip(np.tanh(pos_mu.cpu().numpy().flatten()), -1, 1),
             "risk_budget": np.clip(risk_mu.cpu().numpy().flatten(), 0.01, 0.10),
             "hold_bars": int(hold_logits.argmax(-1).item()),
         }
@@ -121,7 +127,7 @@ class MetaController:
         torch.onnx.export(
             self.network, dummy, str(path),
             input_names=["observation"],
-            output_names=["regime", "position", "risk_budget", "hold_bars", "log_prob", "value"],
+            output_names=["position", "risk_budget", "hold_bars", "log_prob", "value"],
             dynamic_axes={"observation": {0: "batch"}},
         )
 

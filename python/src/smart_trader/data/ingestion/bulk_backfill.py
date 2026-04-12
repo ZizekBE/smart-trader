@@ -161,35 +161,55 @@ class BulkBackfillService:
                 tf_ms = TIMEFRAME_MS.get(timeframe, 60_000)
 
                 if last is not None:
+                    earliest = await repo.get_earliest_time(
+                        symbol, self._adapter.exchange_id, timeframe,
+                    )
                     resume_from = last + timedelta(milliseconds=tf_ms)
-                    if resume_from >= until:
+
+                    ranges: list[tuple[datetime, datetime]] = []
+                    if earliest is not None and since < earliest:
+                        pre_end = earliest - timedelta(milliseconds=tf_ms)
+                        ranges.append((since, pre_end))
+                        self._log.info("pre_fill_gap", symbol=symbol,
+                                       tf=timeframe, gap_start=since, gap_end=pre_end)
+                    if resume_from < until:
+                        ranges.append((resume_from, until))
+                        result.resumed_from = resume_from
+
+                    if not ranges:
                         self._log.info("already_complete", symbol=symbol, tf=timeframe)
                         result.elapsed_s = time.monotonic() - t0
                         return result
-                    result.resumed_from = resume_from
-                    since = resume_from
+                else:
+                    ranges = [(since, until)]
 
                 # clamp to exchange max history limit (with 5% safety margin)
                 max_bars = EXCHANGE_MAX_BARS.get(self._adapter.exchange_id, 0)
-                if max_bars > 0:
-                    max_lookback_ms = int(max_bars * 0.95) * tf_ms
-                    earliest_allowed = until - timedelta(milliseconds=max_lookback_ms)
-                    if since < earliest_allowed:
-                        self._log.warning(
-                            "clamped_to_exchange_limit",
-                            symbol=symbol, tf=timeframe,
-                            requested=since.isoformat(),
-                            clamped=earliest_allowed.isoformat(),
-                            max_bars=max_bars,
-                        )
-                        since = earliest_allowed
+                clamped_ranges: list[tuple[datetime, datetime]] = []
+                for r_since, r_until in ranges:
+                    if max_bars > 0:
+                        max_lookback_ms = int(max_bars * 0.95) * tf_ms
+                        earliest_allowed = r_until - timedelta(milliseconds=max_lookback_ms)
+                        if r_since < earliest_allowed:
+                            self._log.warning(
+                                "clamped_to_exchange_limit",
+                                symbol=symbol, tf=timeframe,
+                                requested=r_since.isoformat(),
+                                clamped=earliest_allowed.isoformat(),
+                                max_bars=max_bars,
+                            )
+                            r_since = earliest_allowed
+                    clamped_ranges.append((r_since, r_until))
 
-                # paginated fetch
-                fetched, inserted = await self._fetch_and_store(
-                    symbol, timeframe, since, until,
-                )
-                result.fetched = fetched
-                result.inserted = inserted
+                total_fetched, total_inserted = 0, 0
+                for r_since, r_until in clamped_ranges:
+                    fetched, inserted = await self._fetch_and_store(
+                        symbol, timeframe, r_since, r_until,
+                    )
+                    total_fetched += fetched
+                    total_inserted += inserted
+                result.fetched = total_fetched
+                result.inserted = total_inserted
 
         except Exception as exc:
             result.error = str(exc)
