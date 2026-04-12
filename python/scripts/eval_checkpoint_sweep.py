@@ -176,13 +176,6 @@ def main() -> None:
     first_data = list(all_data.values())[0]
     sample_feats = compute_features(first_data["1m"].head(50), FeatureConfig(), prefix="x_")
     features_per_tf = len(sample_feats.columns)
-    space_cfg = SpaceConfig(n_timeframes=len(first_data), features_per_tf=features_per_tf)
-    obs_dim = (
-        space_cfg.n_timeframes * space_cfg.features_per_tf
-        + space_cfg.portfolio_dim
-        + space_cfg.microstructure_dim
-        + space_cfg.time_dim
-    )
 
     eval_args = Namespace(
         test_days=args.test_days,
@@ -210,19 +203,28 @@ def main() -> None:
     print(f"  {'─'*96}")
 
     for label, ckpt_path in items:
-        d_model, n_layers, n_heads, saved_obs = ew.resolve_arch_from_checkpoint(
-            ckpt_path, args.device, arch_ns,
-        )
+        arch = ew.resolve_arch_from_checkpoint(ckpt_path, args.device, arch_ns)
+        lookback = arch["lookback"]
+        context_dim = arch["context_dim"]
+
+        space_cfg = SpaceConfig(n_timeframes=len(first_data),
+                                features_per_tf=features_per_tf,
+                                lookback=lookback)
+        obs_dim = space_cfg.lookback * space_cfg.market_dim + space_cfg.context_dim
+
+        saved_obs = arch["saved_obs"]
         if saved_obs is not None and saved_obs != obs_dim:
             print(f"  {label:<18}  SKIP obs_dim ckpt={saved_obs} data={obs_dim}", file=sys.stderr)
             continue
 
         agent = MetaController(
             obs_dim=obs_dim,
-            d_model=d_model,
-            n_heads=n_heads,
-            n_layers=n_layers,
+            d_model=arch["d_model"],
+            n_heads=arch["n_heads"],
+            n_layers=arch["n_layers"],
             device=args.device,
+            lookback=lookback,
+            context_dim=context_dim,
         )
         try:
             agent.load(ckpt_path)
@@ -230,7 +232,8 @@ def main() -> None:
             print(f"  {label:<18}  LOAD FAILED: {e}", file=sys.stderr)
             continue
 
-        all_results = ew.run_walkforward_eval(agent, all_data, eval_args, verbose=False)
+        all_results = ew.run_walkforward_eval(agent, all_data, eval_args,
+                                              verbose=False, lookback=lookback)
         agg = ew.summarize_fold_results(all_results, len(all_data))
         if not agg:
             print(f"  {label:<18}  no results")

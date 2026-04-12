@@ -31,7 +31,18 @@ class PositionalEncoding(nn.Module):
 
 
 class TransformerBackbone(nn.Module):
-    """Shared feature extractor using Transformer encoder layers."""
+    """Shared feature extractor using Transformer encoder layers.
+
+    Supports two modes controlled by ``lookback``:
+
+    * **lookback=1** (legacy): the full flat observation is projected as a
+      single token.  Backward-compatible with v7 and earlier checkpoints.
+    * **lookback>1** (sequence): the flat observation is split into a market
+      feature sequence of ``lookback`` bars and a context vector (portfolio
+      state + time embedding).  The context is projected as a learned
+      ``[CTX]`` token prepended to the sequence, allowing cross-attention
+      between current state and recent price history.
+    """
 
     def __init__(
         self,
@@ -40,31 +51,55 @@ class TransformerBackbone(nn.Module):
         n_heads: int = 4,
         n_layers: int = 2,
         dropout: float = 0.05,
+        lookback: int = 1,
+        context_dim: int = 0,
     ) -> None:
         super().__init__()
-        self.projection = nn.Linear(input_dim, d_model)
-        self.pos_enc = PositionalEncoding(d_model)
+        self.lookback = lookback
+        self.context_dim = context_dim
+        self.output_dim = d_model
+
+        if lookback > 1 and context_dim > 0:
+            self.token_dim = (input_dim - context_dim) // lookback
+            self.projection = nn.Linear(self.token_dim, d_model)
+            self.context_proj = nn.Linear(context_dim, d_model)
+        else:
+            self.token_dim = input_dim
+            self.projection = nn.Linear(input_dim, d_model)
+            self.context_proj = None
+
+        self.pos_enc = PositionalEncoding(d_model, max_len=max(lookback + 2, 512))
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model, nhead=n_heads,
             dim_feedforward=d_model * 4, dropout=dropout,
             batch_first=True, activation="gelu",
         )
         self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
-        self.output_dim = d_model
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            x: (batch, input_dim) or (batch, seq_len, input_dim)
+            x: (batch, flat_dim) — flat observation vector.
         Returns:
-            (batch, d_model) — pooled representation
+            (batch, d_model) — pooled representation.
         """
-        if x.dim() == 2:
-            x = x.unsqueeze(1)  # treat as length-1 sequence
-        x = self.projection(x)
-        x = self.pos_enc(x)
-        x = self.encoder(x)
-        return x.mean(dim=1)  # global average pooling
+        if self.lookback > 1 and self.context_proj is not None:
+            ctx = x[:, -self.context_dim:]
+            market = x[:, :-self.context_dim]
+            market = market.view(-1, self.lookback, self.token_dim)
+            market = self.projection(market)
+            ctx_token = self.context_proj(ctx).unsqueeze(1)
+            seq = torch.cat([ctx_token, market], dim=1)
+        else:
+            if x.dim() == 2:
+                seq = x.unsqueeze(1)
+            else:
+                seq = x
+            seq = self.projection(seq)
+
+        seq = self.pos_enc(seq)
+        seq = self.encoder(seq)
+        return seq.mean(dim=1)
 
 
 class PolicyHead(nn.Module):
@@ -189,9 +224,14 @@ class MetaControllerNetwork(nn.Module):
         d_model: int = 128,
         n_heads: int = 4,
         n_layers: int = 2,
+        lookback: int = 1,
+        context_dim: int = 0,
     ) -> None:
         super().__init__()
-        self.backbone = TransformerBackbone(obs_dim, d_model, n_heads, n_layers)
+        self.backbone = TransformerBackbone(
+            obs_dim, d_model, n_heads, n_layers,
+            lookback=lookback, context_dim=context_dim,
+        )
         self.policy = PolicyHead(d_model)
         self.value = ValueHead(d_model)
 

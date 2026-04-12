@@ -28,9 +28,14 @@ class MetaController:
         n_heads: int = 4,
         n_layers: int = 2,
         device: str = "cpu",
+        lookback: int = 1,
+        context_dim: int = 0,
     ) -> None:
         self.device = torch.device(device)
-        self.network = MetaControllerNetwork(obs_dim, d_model, n_heads, n_layers)
+        self.network = MetaControllerNetwork(
+            obs_dim, d_model, n_heads, n_layers,
+            lookback=lookback, context_dim=context_dim,
+        )
         self.network.to(self.device)
         self._deterministic = False
 
@@ -92,16 +97,20 @@ class MetaController:
              extra: dict | None = None) -> None:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        enc = self.network.backbone.encoder
+        bb = self.network.backbone
+        enc = bb.encoder
         n_layers = len(enc.layers)
         n_heads = int(enc.layers[0].self_attn.num_heads)
+        obs_dim = bb.lookback * bb.token_dim + bb.context_dim if bb.lookback > 1 and bb.context_dim > 0 else bb.projection.in_features
         payload = {
             "model_state": self.network.state_dict(),
             "config": {
-                "obs_dim": self.network.backbone.projection.in_features,
-                "d_model": self.network.backbone.output_dim,
+                "obs_dim": obs_dim,
+                "d_model": bb.output_dim,
                 "n_layers": n_layers,
                 "n_heads": n_heads,
+                "lookback": bb.lookback,
+                "context_dim": bb.context_dim,
             },
             "step": step,
         }

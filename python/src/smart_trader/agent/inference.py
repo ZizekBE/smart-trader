@@ -93,9 +93,16 @@ class InferenceService:
         from smart_trader.agent.meta_controller import MetaController
 
         ckpt = torch.load(self.cfg.model_path, map_location=self.cfg.device, weights_only=False)
-        obs_dim = ckpt["config"]["obs_dim"]
-        d_model = ckpt["config"]["d_model"]
-        self._model = MetaController(obs_dim=obs_dim, d_model=d_model, device=self.cfg.device)
+        cfg = ckpt["config"]
+        self._model = MetaController(
+            obs_dim=cfg["obs_dim"],
+            d_model=cfg["d_model"],
+            n_layers=cfg.get("n_layers", 2),
+            n_heads=cfg.get("n_heads", 4),
+            device=self.cfg.device,
+            lookback=cfg.get("lookback", 1),
+            context_dim=cfg.get("context_dim", 0),
+        )
         self._model.load(self.cfg.model_path)
         self._model.set_deterministic(True)
 

@@ -188,28 +188,39 @@ class MarketEnv(gym.Env):
 
     # ── observation ────────────────────────────────────────────
 
-    def _get_observation(self) -> np.ndarray:
+    def _bar_features(self, step: int) -> np.ndarray:
+        """Market features for a single bar across all timeframes."""
         sc = self.cfg.space_config
         parts: list[np.ndarray] = []
-
-        # multi-TF features
         for tf in sorted(self._features.keys()):
             feat_df = self._features[tf]
-            if self._step < len(feat_df):
-                row = feat_df.iloc[self._step].to_numpy(dtype=np.float32, na_value=0.0)
+            if step < len(feat_df):
+                row = feat_df.iloc[step].to_numpy(dtype=np.float32, na_value=0.0)
             else:
                 row = np.zeros(len(feat_df.columns), dtype=np.float32)
-            # pad or truncate to features_per_tf
             padded = np.zeros(sc.features_per_tf, dtype=np.float32)
             n = min(len(row), sc.features_per_tf)
             padded[:n] = row[:n]
             parts.append(padded)
-
-        # pad if fewer timeframes than expected
         while len(parts) < sc.n_timeframes:
             parts.append(np.zeros(sc.features_per_tf, dtype=np.float32))
+        return np.concatenate(parts)
 
-        # portfolio state
+    def _get_observation(self) -> np.ndarray:
+        sc = self.cfg.space_config
+        lookback = sc.lookback
+        market_dim = sc.market_dim
+
+        # --- market feature sequence (lookback bars) ---
+        bar_rows: list[np.ndarray] = []
+        start = max(0, self._step - lookback + 1)
+        for t in range(start, self._step + 1):
+            bar_rows.append(self._bar_features(t))
+        while len(bar_rows) < lookback:
+            bar_rows.insert(0, np.zeros(market_dim, dtype=np.float32))
+        market = np.concatenate(bar_rows)
+
+        # --- context vector (portfolio state + microstructure + time) ---
         total = self._portfolio_value()
         pos_frac = 0.0
         if self._position.is_open:
@@ -219,19 +230,17 @@ class MarketEnv(gym.Env):
         dd = (self._reward_engine.state.peak_value - total) / (
             self._reward_engine.state.peak_value + 1e-9
         )
-        parts.append(np.array([
+        portfolio = np.array([
             pos_frac,
             self._position.unrealized_pnl / (total + 1e-9),
             self._position.margin / (total + 1e-9),
             self._cash / (total + 1e-9),
             self._position.leverage / self.cfg.max_leverage,
             dd,
-        ], dtype=np.float32))
+        ], dtype=np.float32)
 
-        if sc.microstructure_dim > 0:
-            parts.append(np.zeros(sc.microstructure_dim, dtype=np.float32))
+        micro = np.zeros(sc.microstructure_dim, dtype=np.float32) if sc.microstructure_dim > 0 else np.empty(0, dtype=np.float32)
 
-        # time embedding
         if self._step < len(self._primary_data):
             ts = self._primary_data.index[self._step]
             if isinstance(ts, pd.Timestamp):
@@ -241,14 +250,16 @@ class MarketEnv(gym.Env):
                 hour, dow = 0, 0
         else:
             hour, dow = 0, 0
-        parts.append(np.array([
+        time_emb = np.array([
             np.sin(2 * np.pi * hour / 24),
             np.cos(2 * np.pi * hour / 24),
             np.sin(2 * np.pi * dow / 7),
             np.cos(2 * np.pi * dow / 7),
-        ], dtype=np.float32))
+        ], dtype=np.float32)
 
-        obs = np.concatenate(parts)
+        context = np.concatenate([portfolio, micro, time_emb])
+
+        obs = np.concatenate([market, context])
         expected = self.observation_space.shape[0]
         if len(obs) < expected:
             obs = np.pad(obs, (0, expected - len(obs)))

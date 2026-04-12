@@ -20,21 +20,31 @@ class SpaceConfig:
     portfolio_dim: int = 6       # position, pnl, margin, cash, leverage, dd
     microstructure_dim: int = 0  # reserved; set >0 when real microstructure data is available
     time_dim: int = 4            # hour_sin, hour_cos, dow_sin, dow_cos
+    lookback: int = 1            # bars of history in the observation sequence
+
+    @property
+    def market_dim(self) -> int:
+        """Feature dimension per bar (all TFs concatenated)."""
+        return self.n_timeframes * self.features_per_tf
+
+    @property
+    def context_dim(self) -> int:
+        """Portfolio + microstructure + time embedding dimension."""
+        return self.portfolio_dim + self.microstructure_dim + self.time_dim
 
 
 def build_observation_space(cfg: SpaceConfig | None = None) -> spaces.Box:
     """Flat observation vector for the Meta Agent.
 
-    Layout:
+    Layout (lookback=1, legacy):
       [multi_tf_features | portfolio_state | microstructure | time_embedding]
+
+    Layout (lookback>1, sequence):
+      [bar_0_features | bar_1_features | ... | bar_{L-1}_features | context]
+      where context = portfolio_state | microstructure | time_embedding
     """
     c = cfg or SpaceConfig()
-    total = (
-        c.n_timeframes * c.features_per_tf
-        + c.portfolio_dim
-        + c.microstructure_dim
-        + c.time_dim
-    )
+    total = c.lookback * c.market_dim + c.context_dim
     return spaces.Box(low=-np.inf, high=np.inf, shape=(total,), dtype=np.float32)
 
 

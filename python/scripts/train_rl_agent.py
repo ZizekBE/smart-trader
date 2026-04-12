@@ -43,6 +43,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--n-steps", type=int, default=512, help="PPO rollout length")
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--max-episode", type=int, default=2000, help="Max episode bars")
+    p.add_argument("--lookback", type=int, default=30,
+                    help="Bars of history in the observation sequence (1 = legacy flat)")
     p.add_argument("--checkpoint-dir", default="./checkpoints")
     p.add_argument("--resume", default=None, help="Path to checkpoint .pt to resume from")
     p.add_argument("--exchange", default=None, help="Filter by exchange (binance, gateio)")
@@ -127,6 +129,7 @@ def train(args: argparse.Namespace, datasets: dict[str, dict[str, pd.DataFrame]]
     space_cfg = SpaceConfig(
         n_timeframes=n_tf,
         features_per_tf=actual_features_per_tf,
+        lookback=args.lookback,
     )
 
     primary_tf = "1m" if "1m" in first_data else list(first_data.keys())[0]
@@ -165,6 +168,8 @@ def train(args: argparse.Namespace, datasets: dict[str, dict[str, pd.DataFrame]]
         n_heads=args.n_heads,
         n_layers=args.n_layers,
         device=args.device,
+        lookback=space_cfg.lookback,
+        context_dim=space_cfg.context_dim,
     )
 
     param_count = sum(p.numel() for p in agent.network.parameters())
@@ -180,7 +185,7 @@ def train(args: argparse.Namespace, datasets: dict[str, dict[str, pd.DataFrame]]
         entropy_coef=0.02,
         eval_freq=5,
         eval_episodes=5,
-        patience=5,
+        patience=10,
     )
 
     trainer = PPOTrainer(env, agent, ppo_config)
@@ -201,6 +206,7 @@ def train(args: argparse.Namespace, datasets: dict[str, dict[str, pd.DataFrame]]
     print(f"{'═'*60}")
     print(f"  symbols:    {sym_str}")
     print(f"  obs_dim:    {obs_dim}")
+    print(f"  lookback:   {args.lookback}")
     print(f"  d_model:    {args.d_model}")
     print(f"  params:     {param_count:,}")
     print(f"  n_steps:    {args.n_steps}")

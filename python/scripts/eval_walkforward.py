@@ -118,8 +118,8 @@ def _infer_n_layers(state: dict) -> int | None:
 
 def resolve_arch_from_checkpoint(
     path: Path, device: str, args: argparse.Namespace,
-) -> tuple[int, int, int, int | None]:
-    """Read d_model / n_layers / n_heads from checkpoint config or state_dict."""
+) -> dict:
+    """Read architecture params from checkpoint config or state_dict."""
     ckpt = torch.load(path, map_location=device, weights_only=False)
     cfg = ckpt.get("config") or {}
     state = ckpt.get("model_state") or {}
@@ -133,8 +133,9 @@ def resolve_arch_from_checkpoint(
     if n_layers is None:
         n_layers = args.n_layers
 
-    n_heads = cfg.get("n_heads", args.n_heads)
-    n_heads = int(n_heads)
+    n_heads = int(cfg.get("n_heads", args.n_heads))
+    lookback = int(cfg.get("lookback", 1))
+    context_dim = int(cfg.get("context_dim", 0))
 
     saved_obs = cfg.get("obs_dim")
     if saved_obs is not None:
@@ -145,13 +146,19 @@ def resolve_arch_from_checkpoint(
         d_model=d_model,
         n_layers=n_layers,
         n_heads=n_heads,
+        lookback=lookback,
         obs_dim_saved=saved_obs,
     )
-    return d_model, n_layers, n_heads, saved_obs
+    return {
+        "d_model": d_model, "n_layers": n_layers, "n_heads": n_heads,
+        "lookback": lookback, "context_dim": context_dim,
+        "saved_obs": saved_obs,
+    }
 
 
 def evaluate_fold(
     agent, data_slice: dict[str, pd.DataFrame], fold: int, obs_dim: int,
+    lookback: int = 1,
 ) -> dict:
     """Run the agent in deterministic mode on a data slice."""
     from smart_trader.data.features.engine import FeatureConfig, compute_features
@@ -166,6 +173,7 @@ def evaluate_fold(
     space_cfg = SpaceConfig(
         n_timeframes=len(data_slice),
         features_per_tf=features_per_tf,
+        lookback=lookback,
     )
     primary_tf = "1m" if "1m" in data_slice else list(data_slice.keys())[0]
     max_bars = len(data_slice[primary_tf]) - 1
@@ -209,6 +217,7 @@ def _run_symbol_folds(
     args,
     *,
     verbose: bool = True,
+    lookback: int = 1,
 ) -> list[dict]:
     """Walk-forward folds for a single symbol."""
     from smart_trader.data.features.engine import FeatureConfig, compute_features
@@ -216,13 +225,9 @@ def _run_symbol_folds(
 
     sample_feats = compute_features(data["1m"].head(50), FeatureConfig(), prefix="x_")
     features_per_tf = len(sample_feats.columns)
-    space_cfg = SpaceConfig(n_timeframes=len(data), features_per_tf=features_per_tf)
-    obs_dim = (
-        space_cfg.n_timeframes * space_cfg.features_per_tf
-        + space_cfg.portfolio_dim
-        + space_cfg.microstructure_dim
-        + space_cfg.time_dim
-    )
+    space_cfg = SpaceConfig(n_timeframes=len(data), features_per_tf=features_per_tf,
+                            lookback=lookback)
+    obs_dim = space_cfg.lookback * space_cfg.market_dim + space_cfg.context_dim
 
     bars_per_day = 24 * 60
     test_bars = args.test_days * bars_per_day
@@ -249,7 +254,7 @@ def _run_symbol_folds(
             break
 
         t0 = time.monotonic()
-        result = evaluate_fold(agent, fold_data, fold_idx, obs_dim)
+        result = evaluate_fold(agent, fold_data, fold_idx, obs_dim, lookback=lookback)
         result["elapsed"] = time.monotonic() - t0
         result["symbol"] = symbol
         results.append(result)
@@ -316,11 +321,13 @@ def run_walkforward_eval(
     args,
     *,
     verbose: bool = True,
+    lookback: int = 1,
 ) -> list[dict]:
     """Run all symbols × folds; optionally suppress per-fold lines (for sweeps)."""
     all_results: list[dict] = []
     for sym, sym_data in all_data.items():
-        results = _run_symbol_folds(agent, sym_data, sym, args, verbose=verbose)
+        results = _run_symbol_folds(agent, sym_data, sym, args,
+                                    verbose=verbose, lookback=lookback)
         all_results.extend(results)
     return all_results
 
@@ -339,34 +346,30 @@ def main() -> None:
         log.error("no_data_available")
         return
 
+    ckpt_path = Path(args.checkpoint)
+    arch = resolve_arch_from_checkpoint(ckpt_path, args.device, args)
+    lookback = arch["lookback"]
+    context_dim = arch["context_dim"]
+
     first_data = list(all_data.values())[0]
     sample_feats = compute_features(first_data["1m"].head(50), FeatureConfig(), prefix="x_")
     features_per_tf = len(sample_feats.columns)
-    space_cfg = SpaceConfig(n_timeframes=len(first_data), features_per_tf=features_per_tf)
-    obs_dim = (
-        space_cfg.n_timeframes * space_cfg.features_per_tf
-        + space_cfg.portfolio_dim
-        + space_cfg.microstructure_dim
-        + space_cfg.time_dim
-    )
+    space_cfg = SpaceConfig(n_timeframes=len(first_data), features_per_tf=features_per_tf,
+                            lookback=lookback)
+    obs_dim = space_cfg.lookback * space_cfg.market_dim + space_cfg.context_dim
 
-    ckpt_path = Path(args.checkpoint)
-    d_model, n_layers, n_heads, saved_obs = resolve_arch_from_checkpoint(
-        ckpt_path, args.device, args,
-    )
+    saved_obs = arch["saved_obs"]
     if saved_obs is not None and saved_obs != obs_dim:
-        log.warning(
-            "obs_dim_mismatch",
-            from_data=obs_dim,
-            from_checkpoint=saved_obs,
-        )
+        log.warning("obs_dim_mismatch", from_data=obs_dim, from_checkpoint=saved_obs)
 
     agent = MetaController(
         obs_dim=obs_dim,
-        d_model=d_model,
-        n_heads=n_heads,
-        n_layers=n_layers,
+        d_model=arch["d_model"],
+        n_heads=arch["n_heads"],
+        n_layers=arch["n_layers"],
         device=args.device,
+        lookback=lookback,
+        context_dim=context_dim,
     )
     try:
         agent.load(ckpt_path)
@@ -390,7 +393,8 @@ def main() -> None:
           f"{'Return':>8}  {'Sharpe':>8}  {'MaxDD':>8}  {'Trades':>6}")
     print(f"  {'─'*72}")
 
-    all_results = run_walkforward_eval(agent, all_data, args, verbose=True)
+    all_results = run_walkforward_eval(agent, all_data, args, verbose=True,
+                                       lookback=lookback)
 
     print(f"  {'─'*72}")
 

@@ -17,8 +17,10 @@ import numpy as np
 import structlog
 
 from smart_trader.agent.inference import InferenceConfig, InferenceService, ShadowMode
+from smart_trader.agent.observation import ObservationBuilder, PortfolioSnapshot
 from smart_trader.core.settings import get_settings
 from smart_trader.data.features.store import FeatureStore
+from smart_trader.env.spaces import SpaceConfig
 from smart_trader.exchange.base import ExchangeAdapter
 from smart_trader.exchange.feed import FeedManager
 from smart_trader.execution.position_manager import PositionManager
@@ -40,6 +42,7 @@ class RLTradingLoop:
         symbols: list[str] | None = None,
         timeframes: list[str] = ("1m", "5m", "1h", "4h"),
         initial_capital: float = 10_000.0,
+        space_config: SpaceConfig | None = None,
     ) -> None:
         self._adapter = adapter
         self._feature_store = feature_store
@@ -49,6 +52,7 @@ class RLTradingLoop:
         self._feed = FeedManager(adapter)
         self._symbols = symbols or get_settings().symbols
         self._timeframes = list(timeframes)
+        self._obs_builder = ObservationBuilder(space_config or SpaceConfig())
         self._shadow: Optional[ShadowMode] = None
         self._running = False
         self._log = log.bind(loop="rl")
@@ -81,13 +85,35 @@ class RLTradingLoop:
         await self._adapter.close()
         self._log.info("rl_loop_stopped")
 
+    async def _build_observation(self, symbol: str, candle) -> np.ndarray:
+        """Build a full observation vector matching training format."""
+        import pandas as pd
+
+        tf_features: dict[str, np.ndarray] = {}
+        for tf in self._timeframes:
+            feat_df = await self._feature_store.get_features(symbol, tf, lookback=1)
+            if not feat_df.empty:
+                tf_features[tf] = feat_df.iloc[-1].to_numpy(dtype=np.float32, na_value=0.0)
+
+        pos_info = self._pos_mgr.get_position(symbol)
+        total_value = self._pos_mgr._capital
+        portfolio = PortfolioSnapshot()
+        if pos_info:
+            portfolio = PortfolioSnapshot(
+                position_fraction=pos_info.get("notional", 0) / (total_value + 1e-9),
+                unrealized_pnl_frac=pos_info.get("unrealized_pnl", 0) / (total_value + 1e-9),
+                margin_frac=pos_info.get("margin", 0) / (total_value + 1e-9),
+                cash_frac=(total_value - pos_info.get("notional", 0)) / (total_value + 1e-9),
+            )
+
+        ts = pd.Timestamp(candle.time) if hasattr(candle, "time") else None
+        return self._obs_builder.build(tf_features, portfolio, ts)
+
     async def _on_candle(self, candle) -> None:
         """Triggered on each new candle from the WebSocket feed."""
         symbol = candle.symbol
         try:
-            obs = await self._feature_store.get_observation(
-                symbol, self._timeframes, lookback=1,
-            )
+            obs = await self._build_observation(symbol, candle)
 
             if self._shadow:
                 self._shadow.evaluate(obs)
