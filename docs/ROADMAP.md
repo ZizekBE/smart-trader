@@ -1,7 +1,20 @@
 # Smart-Trader Roadmap
 
 > 本文档记录从 POC 到生产级 AI 原生交易系统的演进路径。
-> 最后更新：2026-03-26
+> 最后更新：2026-04-13
+
+---
+
+## 近况快照（2026-04）
+
+| 领域 | 状态 | 说明 |
+|------|------|------|
+| **规则引擎** | 生产默认 | `trader --mode rule`；趋势 / 波动率 / 信号 / 风控 / 执行链路稳定运行。 |
+| **RL 实验线** | 可训可评可影子跑 | `scripts/train_rl_agent.py`（PPO）+ `MarketEnv`；观测含多周期特征与 **序列 lookback**；`scripts/eval_walkforward.py` 做 **20 折 × N 天** OOS；`trader --mode rl` / `shadow` + `InferenceConfig.shadow_mode` 做线上/纸面对照。 |
+| **OOS 结论（当前数据）** | 持续迭代 | 在统一 walk-forward（如 14 天窗口）下，**`v8_seq_reg` 系列**（`trade_penalty≈0.02`、适度正则）整体优于单纯加长步数（`v8_seq_reg_long`）或偏低惩罚版本；**`v7_long`** 仍为另一套骨干规模下的对照基线。图表见仓库根 `README.md` / `docs/assets/model_oos_comparison.svg`（由 `scripts/render_model_comparison_charts.py` 从本地 `checkpoints` 评估 JSON 生成）。 |
+| **数据** | 多交易所适配 | 业务侧经 `ExchangeAdapter` / `create_adapter()`；RL 训练/回测常用 Binance 库内蜡烛；`bulk_backfill` 等脚本用于缺口回补（详见 `python` 内脚本与 skill）。 |
+| **ML 信号过滤（Phase 1.1）** | 未开始 | LightGBM 后置过滤器仍属规划，与当前规则引擎并行开发优先级可按业务排期。 |
+| **工程** | 并行推进 | Prometheus/Grafana 等仍在路线图 Phase 4；Rust 执行引擎仍为激活目标而非默认路径。 |
 
 ---
 
@@ -167,12 +180,28 @@ narrative = llm.analyze(f"""
 
 #### 3.4 强化学习策略进化
 
+**已实现（与代码对齐）**
+
+- **环境**：`MarketEnv` — 多周期 K 线 + 特征引擎；奖励与约束在 `env/reward.py` 等模块可调。
+- **智能体**：PPO + **Meta Controller**（Transformer 骨干，`agent/`、`scripts/train_rl_agent.py`）；动作为 **结构化 Dict**（如目标仓位、持有周期离散档、风险预算等，以 `spaces.py` 为准）。
+- **训练**：支持多品种、`--per-symbol` checkpoint、`--resume`、早停与 eval 曲线；checkpoint 内保存架构字段供 `eval_walkforward.py` 自动对齐 `d_model` / `n_layers` / `lookback`。
+- **样本外**：`eval_walkforward.py`（`--n-folds`、`--test-days`）输出 per-fold 与 summary JSON；可选 `render_model_comparison_charts.py` 汇总多 run 作 SVG。
+- **上线前验证**：`shadow` 模式记录决策并与基准对照，不默认替代规则下单。
+
+**进行中 / 风险**
+
+- 分布漂移与折间方差仍大；需固定 **OOS 协议**（窗口、手续费假设、品种）再比较 run。
+- `final_agent.pt` 为训练结束时刻权重；**部署与 WF 优先使用 `best_agent.pt`**（eval 最优）。
+
+**后续（路线图）**
+
+- 尝试 SAC / 离线 RL、或规则与 RL 的 **门控混合**（仅在高置信 regime 启用 RL）。
+- 自动化：定时训练 + walk-forward 门禁 + 结果入库与告警（与 Phase 4.3 合并）。
+
 ```
-环境：历史 K 线 + 实时模拟盘
-Agent：PPO / SAC
-动作空间：{signal_threshold, atr_mult, rr_ratio, hold_bars}
-奖励函数：Sharpe × (1 - MaxDD) - 交易成本
-约束：每次部署前必须通过 OOS 回测 + 最大回撤门槛
+环境：历史 K 线 (+ 多周期特征) + 模拟/纸面执行
+Agent：PPO（Meta Controller）；SAC 等为可选方向
+约束：部署前 WF OOS + 最大回撤 / 折间稳定性门槛；shadow 期对照
 ```
 
 ---
@@ -212,12 +241,22 @@ Grafana 仪表盘：
 ```
 
 #### 4.3 Walk-Forward 自动化
+
+**已有（手动 / CI 可接）**
+
+- 规则与回测：`scripts/run_real_backtest.py`、`run_hybrid_backtest.py` 等（见 `python/README.md`）。
+- RL OOS：`scripts/eval_walkforward.py` → JSON；多模型对比图 `scripts/render_model_comparison_charts.py`。
+
+**待办（定时与闭环）**
+
 ```bash
-# 每周日 00:00 自动执行
+# 目标：每周日 00:00 自动执行（示例）
 0 0 * * 0  scripts/run_real_backtest.py --symbols BTC ETH SOL --weeks 8
   → 结果写入 DB（backtest_results 表）
-  → Sharpe < 0.5 → Slack 告警
+  → Sharpe < 0.5 → Slack / 邮件告警
   → 参数漂移 > 阈值 → 触发 Phase 2.1 重优化
+
+# RL 侧可并列增加：eval_walkforward + 与上一版 checkpoint 指标 diff，未过阈值则阻断「替换生产/影子模型」
 ```
 
 #### 4.4 多交易所 + 多资产
@@ -246,6 +285,7 @@ Grafana 仪表盘：
 事后分析                   →   实时可观测性 + 自动 walk-forward
 单一信号源                 →   多策略投票 + LLM 叙事理解
 Python 5 分钟止损检查      →   Rust 毫秒级执行
+仅规则下单                 →   RL 影子对照 + OOS 协议后再考虑混合/替代
 ```
 
 **在 AI 时代真正的护城河：不是更快的规则引擎，而是能感知市场叙事、自我进化参数、融合链上信息的自适应系统。**
