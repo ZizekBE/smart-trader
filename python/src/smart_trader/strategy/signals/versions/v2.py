@@ -139,6 +139,28 @@ def _volume_ratio_factor(df: pd.DataFrame) -> tuple[float, float]:
     return factor, ratio
 
 
+# ── Liquidity guard (Phase 1.3) ───────────────────────────────────────────────
+
+_LIQUIDITY_WINDOW   = 480   # 1h bars ≈ 20 trading days
+_LIQUIDITY_MIN_FRAC = 0.50  # current volume must be ≥ 50 % of 20d average
+
+
+def _is_liquid(df: pd.DataFrame) -> bool:
+    """Return False if current-bar volume is below 50 % of the 20-day average.
+
+    Requires at least 25 bars; if shorter, always passes (insufficient history).
+    Uses 480 1h bars as the lookback to approximate a 20-day volume baseline.
+    """
+    vol = df["volume"].astype(float)
+    if len(vol) < 25:
+        return True
+    window = min(_LIQUIDITY_WINDOW, len(vol) - 1)
+    avg_vol = float(vol.iloc[-window - 1:-1].mean())
+    if avg_vol <= 0:
+        return True
+    return float(vol.iloc[-1]) / avg_vol >= _LIQUIDITY_MIN_FRAC
+
+
 # ── Voting ────────────────────────────────────────────────────────────────────
 
 _VOTE_BOOST: dict[int, float] = {1: 1.00, 2: 1.20, 3: 1.40}
@@ -168,9 +190,20 @@ def _apply_vote_boost(events: list[SignalEvent]) -> list[SignalEvent]:
 # ── Strategy ──────────────────────────────────────────────────────────────────
 
 class StrategyV2(BaseSignalStrategy):
-    """v1 + multi-signal voting + VWAP alignment + continuous volume scoring."""
+    """v1 + multi-signal voting + VWAP alignment + continuous volume scoring.
+
+    Pass *detectors* to restrict which detector functions are active.  Used by
+    the multi-strategy presets (trend_follower / mean_reversion).  Defaults to
+    the full set (_DETECTORS) when omitted.
+    """
 
     VERSION = "v2"
+
+    def __init__(
+        self,
+        detectors: list[tuple[str, callable]] | None = None,
+    ) -> None:
+        self._detectors = detectors if detectors is not None else _DETECTORS
 
     def analyse(
         self,
@@ -184,10 +217,14 @@ class StrategyV2(BaseSignalStrategy):
         if df.empty:
             return []
 
+        # Phase 1.3: skip entire bar when current volume < 50 % of 20d average
+        if not _is_liquid(df):
+            return []
+
         now    = datetime.now(timezone.utc)
         events: list[SignalEvent] = []
 
-        for name, detector in _DETECTORS:
+        for name, detector in self._detectors:
             result: DetectorResult = detector(df)
             if result is None:
                 continue

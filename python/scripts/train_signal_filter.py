@@ -119,7 +119,7 @@ def build_feature_matrix(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
 def evaluate(name: str, model, X: pd.DataFrame, y: pd.Series) -> dict:
     from sklearn.metrics import average_precision_score, roc_auc_score
 
-    proba = model.predict(X)
+    proba = model.predict_proba(X)[:, 1]
     auc = roc_auc_score(y, proba)
     pr_auc = average_precision_score(y, proba)
 

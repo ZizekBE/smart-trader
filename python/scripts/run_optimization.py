@@ -33,7 +33,7 @@ log = logging.getLogger(__name__)
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
-async def _load_df(symbol: str, tf: str, days: int) -> pd.DataFrame:
+async def _load_df(symbol: str, tf: str, days: int, exchange: str = "gateio") -> pd.DataFrame:
     from smart_trader.data.storage.candle_repo import CandleRepository
     from smart_trader.data.storage.database import get_session_factory
 
@@ -43,7 +43,7 @@ async def _load_df(symbol: str, tf: str, days: int) -> pd.DataFrame:
 
     async with factory() as session:
         repo    = CandleRepository(session)
-        candles = await repo.get_range(symbol, "gateio", tf, since, now)
+        candles = await repo.get_range(symbol, exchange, tf, since, now)
 
     if not candles:
         return pd.DataFrame()
@@ -149,7 +149,8 @@ def _print_comparison(symbol: str, default_m, opt_m, best_params: dict) -> None:
         print(f"    {k:<28} {val}{delta}")
 
 
-async def _run(symbols: list[str], days: int, trials: int, skip_sync: bool) -> None:
+async def _run(symbols: list[str], days: int, trials: int, skip_sync: bool,
+               exchange: str = "binance") -> None:
     from smart_trader.analysis.backtest.engine import BacktestConfig, BacktestEngine
     from smart_trader.analysis.optimizer.study import WalkForwardOptimizer
 
@@ -158,6 +159,7 @@ async def _run(symbols: list[str], days: int, trials: int, skip_sync: bool) -> N
     print(f"║   symbols : {', '.join(symbols):<49}║")
     print(f"║   days    : {days:<49}║")
     print(f"║   trials  : {trials:<49}║")
+    print(f"║   exchange: {exchange:<49}║")
     print(f"{'╚'+'═'*62+'╝'}\n")
 
     if not skip_sync:
@@ -168,9 +170,9 @@ async def _run(symbols: list[str], days: int, trials: int, skip_sync: bool) -> N
     for sym in symbols:
         print(f"\n── {sym} ─────────────────────────────────────────────────────")
 
-        sig_df   = await _load_df(sym, "1h", days)
-        trend_df = await _load_df(sym, "1d", days)
-        mid_df   = await _load_df(sym, "4h", days)
+        sig_df   = await _load_df(sym, "1h", days, exchange)
+        trend_df = await _load_df(sym, "1d", days, exchange)
+        mid_df   = await _load_df(sym, "4h", days, exchange)
 
         if len(sig_df) < 120:
             log.warning(f"  Not enough 1h candles ({len(sig_df)}), skipping")
@@ -209,13 +211,26 @@ async def _run(symbols: list[str], days: int, trials: int, skip_sync: bool) -> N
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Bayesian walk-forward optimisation")
-    parser.add_argument("--symbols", nargs="+", default=["BTC/USDT", "ETH/USDT", "SOL/USDT"])
-    parser.add_argument("--days",    type=int, default=180)
-    parser.add_argument("--trials",  type=int, default=100)
+    parser.add_argument("--symbols",       nargs="+", default=["BTC/USDT", "ETH/USDT"])
+    parser.add_argument("--days",          type=int, default=180,
+                        help="Total history window (days).  --rolling-weeks overrides this.")
+    parser.add_argument("--rolling-weeks", type=int, default=None,
+                        help="Phase-2.1: rolling window mode — sets train=weeks*7*3, test=weeks*7.")
+    parser.add_argument("--trials",        type=int, default=100)
+    parser.add_argument("--exchange",      default="binance",
+                        help="Exchange name stored in candles table (default: binance).")
     parser.add_argument("--skip-sync", action="store_true")
     args = parser.parse_args()
 
-    asyncio.run(_run(args.symbols, args.days, args.trials, args.skip_sync))
+    if args.rolling_weeks:
+        # Phase 2.1: rolling 4-week window — train on 3× window, test on 1×
+        test_days  = args.rolling_weeks * 7
+        train_days = test_days * 3
+        days       = train_days + test_days
+    else:
+        days = args.days
+
+    asyncio.run(_run(args.symbols, days, args.trials, args.skip_sync, args.exchange))
 
 
 if __name__ == "__main__":

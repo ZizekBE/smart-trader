@@ -16,7 +16,9 @@
 | **OOS 结论（v9 数据）** | **已结案** | r4 checkpoint：`checkpoints/v9_conservative_r4/best_agent.pt`（best eval -0.1089，step 33,280）。WF Mean Sharpe -1.51（未过 shadow 门禁 Sharpe > 0）。下一步：Phase 1.1 LightGBM 信号过滤器，或设计 v10 架构（lookback=10+，更大参数量）。 |
 | **数据** | 完备 | FR 100%（4700 行/symbol，2022–2026）；OI 30 天窗口；1m/1h/4h 蜡烛完整（Binance，2022-01-01）。 |
 | **EPIC-RL-OPT** | **已完成** | ST-OPT-01/02/03/04/05 全部落地（v9 架构优化 + reward shaping r3-r5）。见 `implementation_todos.md`。 |
-| **ML 信号过滤（Phase 1.1）** | **🟡 已启动** | `collect_signal_labels.py` 已写（历史信号回放 + 标注 → Parquet）。下一步：运行采集 → LightGBM 训练 → WF 验证。 |
+| **Phase 1 信号质量（1.1/1.2/1.3）** | **✅ Phase 1 全部完成** | 1.1 LightGBM 过滤器（WR +20.6pp，Sharpe +8.02，门禁通过）；1.2 多信号投票硬截断（`min_votes` 参数）；1.3 流动性守门（480-bar 20日均量 < 50% 跳过）。 |
+| **ML 过滤器 Shadow（EPIC-SHADOW）** | **✅ 初步 shadow 完成，结论：保留** | `run_ml_filter_shadow.py` 在最近 14 天 live 数据对照：基线 WR 38.6% → 过滤后 **65.4%**（+26.8pp），MeanRet -0.001 → +0.003，保留 29.5% 信号。生产搭配规则引擎使用。RL shadow 待 v10 后重启。 |
+| **Phase 2 自适应进化（EPIC-PHASE2）** | **🟡 2.1 + 2.2 完成，2.3 待启动** | 2.1：`run_optimization.py` 新增 `--exchange` + `--rolling-weeks 4`；2.2：`RegimeParamAdapter`（24 格参数表）接入 loop — TRENDING 放宽入场，RANGING/DISTRIBUTION 收紧 + 双源要求，CRISIS 跳过；2.3：多策略注册待实现。 |
 | **工程** | 并行推进 | Prometheus/Grafana 等在 Phase 4；Rust 执行引擎为激活目标。 |
 
 ---
@@ -136,61 +138,39 @@
 ### Phase 1 — 信号质量跃升
 > 目标：胜率从 50% → 60%+
 
-#### 1.1 ML 信号过滤器
-在规则引擎输出候选信号之后，加一层 LightGBM 二分类过滤器：
+#### 1.1 ML 信号过滤器 ✅
+LightGBM 后置过滤器完成全链：数据采集 → 训练（val AUC 0.665）→ 运行时集成 → WF 验证（WR +20.6pp，Sharpe +8.0，通过门禁）。见 `docs/training_runs/phase1_1_wf_validation.md`。
 
-```
-规则引擎 → 候选信号 → LightGBM 过滤器 → 最终信号
-```
+#### 1.2 多信号投票 ✅
+`SignalEngine.analyse(min_votes=N)` 新参数：当 `min_votes ≥ 2` 时，硬过滤 `vote_count < 2` 的信号。现有软惩罚（单信号信心门槛）保留作第一道筛选；`min_votes=2` 为第二道硬截断。默认值 1，向后兼容。
 
-- **特征**：RSI、ATR rank、regime one-hot 编码、成交量偏差、近 N 根 K 线序列特征
-- **标签**：未来 N 根 K 线后该信号是否盈利（walk-forward 标注，避免 lookahead bias）
-- **约束**：每次 retrain 必须通过 out-of-sample 验证，防止过拟合
-
-#### 1.2 多信号投票
-要求至少 2 个独立信号源同向确认，减少噪声交易：
-
-```python
-sources = [s.source for s in signals if s.signal_type == direction]
-if len(sources) < 2:
-    skip()
-```
-
-#### 1.3 成交量 Profile 确认
-- 入场价格与 VWAP 偏差 > 1.5%：降低置信度
-- 成交量低于 20 日均量 50%：跳过信号（流动性不足）
+#### 1.3 成交量 Profile 确认 ✅
+- **流动性守门**（已实现）：`_is_liquid(df)` 以 480 根 1h bar（≈20 交易日）为基准，当前成交量 < 50% 均值时 `analyse()` 直接返回空列表。
+- **VWAP 偏差**（等效已覆盖）：现有 `_vwap_factor()` 在偏差 > 1% 时施加 0.82 惩罚因子，比 ROADMAP 的 1.5% 阈值更保守。
 
 ---
 
 ### Phase 2 — 自适应进化
 > 目标：策略参数随市场状态自动调整，告别人工调参
 
-#### 2.1 在线参数学习
-每周末自动对核心参数进行贝叶斯优化：
+#### 2.1 在线参数学习 🟡 部分完成
+- Bayesian 优化引擎（Optuna）+ `optimization_runs` DB 表 — 已有
+- `run_optimization.py` 新增 `--exchange binance` 和 `--rolling-weeks 4`（Phase 2.1 滚动 4 周窗口）✅
+- **待完成**：周期调度（cron/GH Actions）+ 最优参数自动回写 `opt_*.env`（T-P21-2/3）
 
-```
-优化目标参数：[atr_mult, rr_ratio, pullback_frac, min_confidence]
-数据窗口：滚动最近 4 周
-评估指标：Sharpe × (1 - MaxDD)
-输出：写入 DB（backtest_results 表），版本可追溯
-```
+#### 2.2 Regime-Aware 策略切换 ✅
+- `strategy/adaptive_params.py`：24 格参数表（6 MarketRegime × 4 VolRegime）✅
+  - TRENDING → `min_conf=0.55, votes≥1`（放宽入场）
+  - RANGING → `min_conf=0.62–0.72, votes≥2`（要求双源确认）
+  - DISTRIBUTION → `min_conf=0.65–0.75, kelly×0.3–0.5`（防守）
+  - CRISIS → `skip=True`（全跳过）
+- `trader/loop.py` 步骤 7 接入 `RegimeParamAdapter`，替换 vol-only 逻辑 ✅
+- **待完成**：`adaptive.kelly_scale` 传入 RiskManager 叠加（T-P22-3）
 
-#### 2.2 Regime-Aware 策略切换
-| Regime | 模式 | 调整 |
-|--------|------|------|
-| BULL/BEAR_TRENDING | 激进 | 更大 R:R，更松 pullback 阈值 |
-| DISTRIBUTION | 防守 | 半仓，更紧止损 |
-| CRISIS vol | 离场 | 持有现金，等待 regime 恢复 |
-
-#### 2.3 多策略组合
-引入策略注册机制，按 regime 选择最适合的策略：
-
-| 策略 | 适用场景 |
-|------|---------|
-| Trend Following | BULL/BEAR_TRENDING |
-| Mean Reversion | RANGING + LOW vol |
-| Breakout | ACCUMULATION 末期放量 |
-| 当前混合策略 | 保留作 baseline 对照 |
+#### 2.3 多策略组合 ⬜ 待启动
+- 趋势跟随（ema_bounce+macd）/ 均值回归（rsi+bollinger）策略注册
+- Regime 路由：按 TrendState 选策略版本
+- WF 对比：新策略 vs v2 混合基线
 
 ---
 

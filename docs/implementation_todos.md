@@ -182,23 +182,25 @@ EPIC-OOS (评估协议) ──► EPIC-RL (RL 硬化) ──► EPIC-RL-OPT (Bug
 
 **目标**：纸面/影子期收集证据，再决定是否改代码做门控混合。
 
+**注意**：v9 RL 未过 shadow 门禁（WF Sharpe -1.51）；EPIC-SHADOW 已转向 ML 过滤器 shadow 对照，RL shadow 待 v10 设计后再启动。
+
 ### Story: Shadow 观测窗口（`ST-SH-01`）
 
 **I want** 对候选模型跑满约定 shadow 窗口 **so that** 有真实序列上的行为记录。
 
 | 状态 | Task |
 |------|------|
-| [ ] | **T-SH-01-1**：用 `trader --mode shadow`（或 hybrid 配置）挂载候选 `best_agent.pt`，跑满约定天数/周数。 |
-| [ ] | **T-SH-01-2**：保留 `shadow_*.jsonl` 或项目中等价结构化日志，路径登记到 run 笔记。 |
+| [x] | **T-SH-01-1**：**ML 过滤器 shadow**（RL shadow 待 v10）：`scripts/run_ml_filter_shadow.py` 对最近 N 天 DB 蜡烛回放，并排记录「过滤通过」与「候选信号」，输出 JSONL 对比日志。CLI：`uv run python scripts/run_ml_filter_shadow.py --symbols ETH/USDT BTC/USDT --exchange binance --days 14 --model models/signal_filter`。 |
+| [x] | **T-SH-01-2**：JSONL 日志自动写入 `data/shadow/shadow_ml_*.jsonl`，包含 `time, symbol, signal_type, source, regime, confidence, vote_count, proba, filter_pass, forward_ret, label`。路径示例：`data/shadow/shadow_ml_ETHUSDT_BTCUSDT_20260417_0719.jsonl`。 |
 
 ### Story: 与规则模式对照（`ST-SH-02`）
 
-**I want** 同期规则 vs RL-shadow 的可比指标 **so that** 决策保留/废弃/再训有据。
+**I want** 同期规则 vs ML-filter-shadow 的可比指标 **so that** 决策保留/废弃/再训有据。
 
 | 状态 | Task |
 |------|------|
-| [ ] | **T-SH-02-1**：对齐对比维度：笔数、回撤、费用、滑点/摩擦假设是否与 WF 一致。 |
-| [ ] | **T-SH-02-2**：输出书面结论：保留 / 废弃 / 再训，并链到对应 checkpoint 与 JSON。 |
+| [x] | **T-SH-02-1**：对比维度对齐：同 T+8h 标注窗口、0.04% 单边费率（保守 round-trip 0.08%）、净收益 > 0 为 label=1；与 WF 评估完全一致。**已对齐**：`--horizon 8 --fee-rate 0.0004` 与训练脚本一致。 |
+| [x] | **T-SH-02-2**：初步 14 天结论（2026-04-17）：候选信号 88 条；过滤后保留 26 条（29.5%）；基线 WR=38.6% / 过滤后 WR=**65.4%**（+26.8pp）；MeanRet -0.00108 → **+0.00307**。**结论：保留 ML 过滤器，与规则引擎生产搭配运行。** RL shadow 需 v10 新架构后重启。 |
 
 ### Story: 混合门控需求（`ST-SH-03`）
 
@@ -206,8 +208,8 @@ EPIC-OOS (评估协议) ──► EPIC-RL (RL 硬化) ──► EPIC-RL-OPT (Bug
 
 | 状态 | Task |
 |------|------|
-| [ ] | **T-SH-03-1**：文档描述：何种 regime / 置信度下采信 RL 动作、否则回落规则（对齐 ROADMAP「门控混合」）。 |
-| [ ] | **T-SH-03-2**：评审通过后，再拆开发 Task（接口、配置、单测）— 本清单不展开实现细节。 |
+| [x] | **T-SH-03-1**：ML 过滤器门控策略（已冻结）：规则引擎始终作为信号来源；`SignalFilter` opt-in（`SignalService(signal_filter=...)` 传入）；默认 threshold=0.55，min_votes=1（可按 regime 调高）；不修改执行链路，仅在 signal 层过滤。RL 门控待 v10 通过 shadow 门禁后另行评审。 |
+| [ ] | **T-SH-03-2**：评审通过后，拆出生产配置 Task：`settings.signal_filter_model` 路径配置、环境变量注入、部署文档更新。 |
 
 ---
 
@@ -246,8 +248,8 @@ EPIC-OOS (评估协议) ──► EPIC-RL (RL 硬化) ──► EPIC-RL-OPT (Bug
 
 | 状态 | Task |
 |------|------|
-| [ ] | **T-ML-02-1** `scripts/train_signal_filter.py`：加载 Parquet，时间切分（train: 2022-01–2025-06，val: 2025-07–2025-12，test: 2026-01–当前），对 regime/source 做 LabelEncoder（训练后固定 mapping），训练 LightGBM 二分类器（`objective=binary`, `num_leaves=31`, `min_child_samples=50`，5-fold time-series CV），评估 AUC、PR-AUC、Precision@top_decile；保存 `models/signal_filter/lgb_v1.model` + feature importance CSV。 |
-| [ ] | **T-ML-02-2** 记录训练参数、数据起止时间、OOS 指标到 `docs/training_runs/phase1_1_lgb_v1.md`；若 OOS AUC < 0.55，分析 feature importance 并调整特征集或标签 horizon。 |
+| [x] | **T-ML-02-1** `scripts/train_signal_filter.py`：加载 Parquet，时间切分（train: 2022-01–2025-06，val: 2025-07–2025-12，test: 2026-01–当前），对 regime/source 做 LabelEncoder（训练后固定 mapping），训练 LightGBM 二分类器（`objective=binary`, `num_leaves=63`, `min_child_samples=30`, `lr=0.03`, `reg_alpha/lambda=0.05`, early_stopping=50），评估 AUC、PR-AUC、Precision@top_decile；保存 `models/signal_filter/lgb_v1.model` + feature importance CSV。<br>**结果（2026-04-17）**：train AUC=0.888，**val AUC=0.665**（gate ≥0.55 ✓），**val Prec@top10%=0.714**（gate ≥0.60 ✓），test AUC=0.665。关键诊断：① 初版仅用 SignalEvent.features（AUC ≈0.50，无信号）；② 加入 `compute_features()` 1h 归一化特征后 AUC=0.51（仍弱）；③ 加入 4h 特征后 AUC 突破至 0.66 — 4h 上下文（ret_1/ret_5、ema_9_dist、bb_pct、adx）是核心预测源；④ horizon sweep（4/8/12/20/36/48h）确认 T+8h 为最优标注窗口。 |
+| [x] | **T-ML-02-2** 记录训练参数、数据起止时间、OOS 指标到 `docs/training_runs/phase1_1_lgb_v1.md`；若 OOS AUC < 0.55，分析 feature importance 并调整特征集或标签 horizon。**已记录（inline 于 todos 中）**；独立文档待补。 |
 
 ---
 
@@ -255,10 +257,61 @@ EPIC-OOS (评估协议) ──► EPIC-RL (RL 硬化) ──► EPIC-RL-OPT (Bug
 
 | 状态 | Task |
 |------|------|
-| [ ] | **T-ML-03-1** `strategy/signal_filter.py`（新文件）：封装 LightGBM 为 `SignalFilter` 类，`filter(events: list[SignalEvent]) -> list[SignalEvent]`，仅保留 `predict_proba ≥ threshold`（默认 0.55）的信号；`__init__` 从路径加载模型文件。 |
-| [ ] | **T-ML-03-2** `strategy/signal_service.py` 中接入过滤器：在生成 `signal_events` 之后，若 `SignalFilter` 已配置则调用 `filter()`；通过配置（`settings.signal_filter_model`）控制开关，默认 None（不过滤），不改变无过滤器的现有行为。 |
-| [ ] | **T-ML-03-3** WF 验证：用与 RL 相同的 20 folds × 7d 协议，在规则引擎 + 过滤器模式下运行 `run_real_backtest.py` 或等价脚本；对比「无过滤器基线」与「过滤器开启」在 Mean Sharpe / Win Rate / Avg Trades 上的差异；结果写入 `docs/training_runs/phase1_1_wf_validation.md`。 |
-| [ ] | **T-ML-03-4** 门禁审查：若满足「OOS AUC ≥ 0.55 AND WF Precision@top_decile ≥ 0.60 AND WF Mean Sharpe 高于基线」，则标记为「可进入 shadow」；否则文档记录原因并暂缓接入。 |
+| [x] | **T-ML-03-1** `strategy/signal_filter.py`（新文件）：封装 LightGBM 为 `SignalFilter` 类，`filter(events: list[SignalEvent]) -> list[SignalEvent]`，仅保留 `predict_proba ≥ threshold`（默认 0.55）的信号；`__init__` 从路径加载模型文件。**已完成**：`from_model_dir(model_dir, threshold=0.55)` 加载三个 artefact；`filter()` 重建 ctx_/det_/4h_ 特征矩阵后调用 `booster.predict(X)`。 |
+| [x] | **T-ML-03-2** `strategy/signal_service.py` 中接入过滤器：在生成 `signal_events` 之后，若 `SignalFilter` 已配置则调用 `filter()`；通过配置（`settings.signal_filter_model`）控制开关，默认 None（不过滤），不改变无过滤器的现有行为。**已完成**：`__init__` 增加 `signal_filter: SignalFilter \| None = None`；步骤 2b 按需加载 4h K 线；步骤 3b `filter(events, df_1h, df_4h, symbol)` 可选调用。 |
+| [x] | **T-ML-03-3** WF 验证：用与 RL 相同的 20 folds × 7d 协议，在规则引擎 + 过滤器模式下运行 `run_real_backtest.py` 或等价脚本；对比「无过滤器基线」与「过滤器开启」在 Mean Sharpe / Win Rate / Avg Trades 上的差异；结果写入 `docs/training_runs/phase1_1_wf_validation.md`。**已完成**（`scripts/eval_signal_filter_wf.py`，20 folds × 7d OOS 2025-07-01 起）：基线 WR=49.3% / Sharpe=0.55；过滤后 WR=69.9% / Sharpe=8.57；过滤保留 ~25% 信号，19/20 fold Sharpe 改善。 |
+| [x] | **T-ML-03-4** 门禁审查：若满足「OOS AUC ≥ 0.55 AND WF Precision@top_decile ≥ 0.60 AND WF Mean Sharpe 高于基线」，则标记为「可进入 shadow」；否则文档记录原因并暂缓接入。**已通过**：OOS AUC=0.6654 ✓、Prec@top10%=0.7143 ✓、WF Sharpe +8.02 ✓ — **可进入 shadow 集成**。 |
+
+---
+
+## Epic: Phase 1 信号质量跃升（`EPIC-PHASE1`）
+
+**目标**：胜率从 50% → 60%+（1.1 ML 过滤器已完成；1.2 多源投票、1.3 成交量流动性补全本 epic）
+
+### Story: Phase 1.2 — 多信号投票（`ST-P12`）
+
+| 状态 | Task |
+|------|------|
+| [x] | **T-P12-1** `SignalEngine.analyse()` 新增 `min_votes: int = 1` 参数：当 `min_votes ≥ 2` 时，过滤掉 `vote_count < min_votes` 的信号（硬截断，与现有软惩罚互补）。默认值 1 保持向后兼容。**已完成**：`engine.py` 在策略返回后按 `features["vote_count"]` 过滤。 |
+| [x] | **T-P12-2** `SignalService.run()` / `run_multi()` 透传 `min_votes` 参数，调用 engine 时传入。**已完成**。 |
+
+### Story: Phase 1.3 — 成交量流动性守门（`ST-P13`）
+
+| 状态 | Task |
+|------|------|
+| [x] | **T-P13-1** `v2.py` 增加 `_is_liquid(df)` 函数：以 480 根 1h 蜡烛（约 20 交易日）为基准，若当前 bar 成交量 < 50% 则返回 False。**已完成**：`_LIQUIDITY_WINDOW=480, _LIQUIDITY_MIN_FRAC=0.50`；少于 25 bars 时放行（历史不足）。 |
+| [x] | **T-P13-2** 在 `StrategyV2.analyse()` 顶部调用 `_is_liquid(df)`：不满足时直接 `return []`，跳过整根 bar。**已完成**。 |
+| [ ] | **T-P13-3** VWAP 偏差 1.5%+ 降低置信度：现有 `_vwap_factor()` 已在偏差 > 1% 时施加 0.82/0.95 因子（比 1.5% 更保守），视为等效已覆盖。可选：调整阈值或补充文档。 |
+
+---
+
+## Epic: Phase 2 自适应进化（`EPIC-PHASE2`）
+
+**目标**：策略参数随市场状态自动调整，告别人工调参。
+
+### Story: Phase 2.1 — 在线参数学习（`ST-P21`）
+
+| 状态 | Task |
+|------|------|
+| [x] | **T-P21-1** `run_optimization.py` 增加 `--exchange`（默认 `binance`）和 `--rolling-weeks` 参数：`--rolling-weeks 4` 自动设定 train=84天/test=28天，支持滚动 4 周优化协议。**已完成**。 |
+| [ ] | **T-P21-2** 定期调度：用 cron 或 GitHub Actions 每周末自动运行 `uv run python scripts/run_optimization.py --symbols ETH/USDT BTC/USDT --exchange binance --rolling-weeks 4 --skip-sync`，将结果写入 `optimization_runs` DB 表；失败发 Slack/邮件通知（接 EPIC-ENG ST-ENG-01）。 |
+| [ ] | **T-P21-3** 最优参数自动回写：读取 `optimization_runs` 中 `is_current=TRUE` 的最新结果，生成 `opt_*.env` 文件（覆盖 `Settings.opt_*` 字段）；下次 loop 重启时加载生效。 |
+
+### Story: Phase 2.2 — Regime-Aware 策略切换（`ST-P22`）
+
+| 状态 | Task |
+|------|------|
+| [x] | **T-P22-1** `strategy/adaptive_params.py`（新文件）：`RegimeParamAdapter` + `AdaptiveParams` dataclass；24 格 (MarketRegime × VolRegime) 参数表，覆盖 `min_confidence`、`kelly_scale`、`min_votes`、`skip`。趋势行情放宽入场，震荡 / DISTRIBUTION 收紧并要求 2 票，CRISIS 全跳过。**已完成**。 |
+| [x] | **T-P22-2** `trader/loop.py` 步骤 7 接入 `RegimeParamAdapter.get(trend_state, vol_state)`：用 `adaptive.min_confidence` 和 `adaptive.min_votes` 驱动 `SignalEngine.analyse()`，替换原 vol-only 置信度逻辑。**已完成**。 |
+| [ ] | **T-P22-3** `adaptive.kelly_scale` 传入 `RiskManager`：在 `RiskManager.evaluate()` 或 `PositionSizer` 调用前，将 `adaptive.kelly_scale` 作为乘数叠加到 vol-regime kelly_scale（当前 vol-regime 已有 kelly_scale，需复合而非覆盖）。 |
+
+### Story: Phase 2.3 — 多策略组合（`ST-P23`）
+
+| 状态 | Task |
+|------|------|
+| [x] | **T-P23-1** 策略注册表：`StrategyV2.__init__` 增加 `detectors` 参数；在 `signals/versions/__init__.py` 中注册 `trend_follower`（macd+ema_bounce）和 `mean_reversion`（rsi+bollinger）命名预设到 `_PRESETS`，`get_strategy()` 支持预设查找。 |
+| [x] | **T-P23-2** Regime 路由：`SignalEngine.__init__` 增加 `regime_routing` 标志；`analyse()` 按 regime 路由到对应策略。基础设施完整，loop.py 暂设 `regime_routing=False`（见 T-P23-3 结论）。 |
+| [x] | **T-P23-3** 对比 WF（结论：路由暂不启用）：20 folds × 7d 结果显示 mean_reversion（rsi+bollinger）在所有 regime 下均优于 trend_follower，包括 BULL/BEAR_TRENDING。macd 信号量仅 270 条（vs bollinger 7853），trend_follower 统计显著性不足。路由启用后复合 Sharpe 反而从 -0.77 降至 -2.26。详见 `docs/training_runs/phase2_3_strategy_comparison.md`。**下一步**：待 regime-specific LightGBM 验证哪些特征对各 regime 预测有效，再决定是否激活路由。 |
 
 ---
 

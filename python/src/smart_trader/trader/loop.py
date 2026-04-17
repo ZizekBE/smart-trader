@@ -38,6 +38,7 @@ from smart_trader.data.storage.candle_repo import CandleRepository
 from smart_trader.data.storage.database import get_session_factory
 from smart_trader.execution.engine import ExecutionEngine
 from smart_trader.risk.manager import RiskManager
+from smart_trader.strategy.adaptive_params import RegimeParamAdapter
 from smart_trader.strategy.signals.engine import SignalEngine
 from smart_trader.strategy.trend.engine import TrendEngine
 from smart_trader.strategy.trend.regime import MarketRegime
@@ -98,8 +99,12 @@ class TradingLoop:
         self._engine   = ExecutionEngine(client=self._client, paper=paper)
         self._risk     = RiskManager.from_settings()
         self._trend    = TrendEngine()
-        self._signal   = SignalEngine(version=s.strategy_version)
+        # regime_routing=False: T-P23-3 WF showed trend_follower underperforms
+        # mean_reversion even in trending regimes — routing deferred until better
+        # detector subsets are validated.
+        self._signal   = SignalEngine(version=s.strategy_version, regime_routing=False)
         self._vol      = VolatilityAnalyzer()
+        self._regime_params = RegimeParamAdapter()
         # use optimised cooldown if set in .env
         self._sl_cooldown_bars = s.opt_sl_cooldown_bars if s.opt_sl_cooldown_bars is not None else SL_COOLDOWN
         self._log.info("strategy_version", version=s.strategy_version,
@@ -306,17 +311,24 @@ class TradingLoop:
         # persist current vol regime for adaptive cooldown on future stops
         self._cur_vol_regime = str(vol_state.regime) if vol_state is not None else ""
 
-        # ── 7. signal detection ───────────────────────────────────────────
-        s = get_settings()
-        _is_high_vol = self._cur_vol_regime in ("high", "crisis")
-        _min_conf    = MIN_CONF_HIGH_VOL if _is_high_vol else s.confidence_threshold
+        # ── 7. signal detection (Phase 2.2: regime-aware params) ─────────
+        adaptive = self._regime_params.get(trend_state, vol_state)
+        if adaptive.skip:
+            self._log.info("regime_skip", params=str(adaptive))
+            tick["decision"] = "regime_skip"
+            _emit()
+            await self._log_portfolio(price)
+            return
+
+        self._log.debug("adaptive_params", params=str(adaptive))
         signals = self._signal.analyse(
             sig_df,
             symbol=self.symbol,
             timeframe=self.signal_tf,
             trend_state=trend_state,
             vol_state=vol_state,
-            min_confidence=_min_conf,
+            min_confidence=adaptive.min_confidence,
+            min_votes=adaptive.min_votes,
         )
 
         # capture all signals (before vol-source filter) in tick record
