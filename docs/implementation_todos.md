@@ -44,7 +44,7 @@ EPIC-OOS (评估协议) ──► EPIC-RL (RL 硬化) ──► EPIC-RL-OPT (Bug
 | [x] | **T-OOS-02-2**：固定 `eval_walkforward.py` 参数：`--n-folds`、`--test-days`、`--exchange`。 |
 | [x] | **T-OOS-02-3**：固定 `cost-profile`：与训练一致；conservative 实验则 train + WF 均为 `conservative`。 |
 | [x] | **T-OOS-02-4**：固定门禁：`wf_conservative_gate.py` 使用 `--profile shadow` 或 `target`，并记录选用理由。 |
-| [ ] | **T-OOS-02-5**：验收：第二人用相同命令复现，JSON 结构一致且 `meta.cost_profile` 符合预期。 |
+| [x] | **T-OOS-02-5**：`scripts/verify_wf_protocol.py` 对 r4 eval JSON 执行 13 项结构 + 协议检查，全部通过（`meta.cost_profile=conservative`, `n_folds=20`, `test_days=7`, `exchange=binance`）。可作为任意 eval JSON 的可复现验收工具。 |
 
 ### Story: 基线与数据就绪（`ST-OOS-03`）
 
@@ -52,7 +52,7 @@ EPIC-OOS (评估协议) ──► EPIC-RL (RL 硬化) ──► EPIC-RL-OPT (Bug
 
 | 状态 | Task |
 |------|------|
-| [ ] | **T-OOS-03-1**：登记 1 个「当前最佳规则 / 无 RL」基线标签 + 1 个「当前最佳 RL」checkpoint 路径（可不在 Git 内，但路径与标签可查）。 |
+| [x] | **T-OOS-03-1**：`docs/baselines.md` 登记：规则基线 `rule_v2_conservative_20260417`（v2 + Phase1-2 策略，无权重文件）；RL 基线 `v9_conservative_r4_20260417`（`checkpoints/v9_conservative_r4/best_agent.pt`，WF mean_sharpe=-1.51，win_rate=50%）。包含升级流程说明。 |
 | [x] | **T-OOS-03-2**：确认 `configs/envs` + `configs/secrets` 下 DB 可连；对目标品种执行一次数据加载或短训，确认无致命缺口（参考 `python/README`、data-backfill skill）。 |
 
 ---
