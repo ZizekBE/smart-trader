@@ -16,8 +16,9 @@ COPY pyproject.toml uv.lock* ./
 RUN uv sync --frozen --no-dev
 
 # Copy source
-COPY src/ ./src/
+COPY src/     ./src/
 COPY configs/ ./configs/
+COPY scripts/ ./scripts/
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1

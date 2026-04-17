@@ -294,8 +294,8 @@ EPIC-OOS (评估协议) ──► EPIC-RL (RL 硬化) ──► EPIC-RL-OPT (Bug
 | 状态 | Task |
 |------|------|
 | [x] | **T-P21-1** `run_optimization.py` 增加 `--exchange`（默认 `binance`）和 `--rolling-weeks` 参数：`--rolling-weeks 4` 自动设定 train=84天/test=28天，支持滚动 4 周优化协议。**已完成**。 |
-| [ ] | **T-P21-2** 定期调度：用 cron 或 GitHub Actions 每周末自动运行 `uv run python scripts/run_optimization.py --symbols ETH/USDT BTC/USDT --exchange binance --rolling-weeks 4 --skip-sync`，将结果写入 `optimization_runs` DB 表；失败发 Slack/邮件通知（接 EPIC-ENG ST-ENG-01）。 |
-| [ ] | **T-P21-3** 最优参数自动回写：读取 `optimization_runs` 中 `is_current=TRUE` 的最新结果，生成 `opt_*.env` 文件（覆盖 `Settings.opt_*` 字段）；下次 loop 重启时加载生效。 |
+| [x] | **T-P21-2** 定期调度：`infra/scheduler/install-cron.sh` 安装每周日 02:00 UTC 的 host cron；触发 `docker compose --profile optimizer run --rm optimizer`（运行 `run_weekly_opt.sh`）；失败时可选 POST 到 `SLACK_WEBHOOK_URL`。日志写入 `logs/optimizer-cron.log`。 |
+| [x] | **T-P21-3** 最优参数自动回写：`scripts/write_opt_params.py` 读取 `optimization_runs.is_current=TRUE`，取各 symbol 中位数，写入 `configs/envs/opt_params.env`（已加入 `env_files.py` 加载链，优先级高于 `.env` 但低于 `secrets/.env`）。`run_weekly_opt.sh` 在优化后自动调用。 |
 
 ### Story: Phase 2.2 — Regime-Aware 策略切换（`ST-P22`）
 

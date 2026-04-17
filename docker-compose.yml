@@ -145,6 +145,33 @@ services:
         condition: service_healthy
     command: uv run trader
 
+  # ── Weekly Bayesian optimiser (T-P21-2) ───────────────────────────────────
+  # One-shot container: docker compose --profile optimizer run --rm optimizer
+  # A host cron entry (see infra/scheduler/install-cron.sh) triggers this weekly.
+  # Set SLACK_WEBHOOK_URL in configs/secrets/.env for failure notifications.
+  optimizer:
+    build:
+      context: ./python
+      dockerfile: ../infra/docker/Dockerfile.python
+    container_name: smart-trader-optimizer
+    env_file: ./configs/envs/.env
+    environment:
+      DB_HOST: timescaledb
+      REDIS_HOST: redis
+      SYMBOLS: ${OPT_SYMBOLS:-BTC/USDT ETH/USDT}
+      OPT_EXCHANGE: ${OPT_EXCHANGE:-binance}
+      OPT_ROLLING_WEEKS: ${OPT_ROLLING_WEEKS:-4}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+    volumes:
+      - ./python/src:/app/src:ro
+      - ./configs:/app/configs
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    profiles:
+      - optimizer
+    command: /bin/bash /app/scripts/run_weekly_opt.sh
+
   # ── Rust execution engine ──────────────────────────────────────────────────
   trader-rust:
     build:

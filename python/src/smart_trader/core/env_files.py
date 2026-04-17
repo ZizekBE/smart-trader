@@ -53,7 +53,13 @@ def apply_env_file(path: Path, *, override: bool) -> None:
 
 
 def load_repo_env_files() -> None:
-    """Load ``configs/envs/.env`` then ``configs/secrets/.env`` (secrets win)."""
+    """Load env files in priority order (later files override earlier ones).
+
+    1. configs/envs/.env          — non-secret defaults
+    2. configs/envs/opt_params.env — auto-generated optimised params (T-P21-3)
+    3. configs/secrets/.env        — credentials; always wins
+    """
     root = repo_root()
-    apply_env_file(root / "configs" / "envs" / ".env", override=False)
-    apply_env_file(root / "configs" / "secrets" / ".env", override=True)
+    apply_env_file(root / "configs" / "envs" / ".env",           override=False)
+    apply_env_file(root / "configs" / "envs" / "opt_params.env", override=True)
+    apply_env_file(root / "configs" / "secrets" / ".env",        override=True)
