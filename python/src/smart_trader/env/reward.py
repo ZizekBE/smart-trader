@@ -171,3 +171,77 @@ class RunningNormalizer:
         self._mean += delta / self._count
         delta2 = val - self._mean
         self._var += (delta * delta2 - self._var) / self._count
+
+
+class RunningObsNormalizer:
+    """Per-dimension EMA normalizer for observation vectors.
+
+    Maintains an exponential moving mean and variance for every feature
+    dimension so the Transformer backbone sees ~N(0, 1) inputs throughout
+    training, regardless of raw indicator scales.
+
+    Designed to be serialized into the checkpoint alongside the model so
+    inference can apply the same normalization as training.
+
+    Args:
+        obs_dim: Observation vector length.
+        alpha:   EMA decay; 0.001 ≈ adapts over ~1 000 steps.
+        clip:    Symmetric clamp after normalization (prevents gradient spikes).
+        warmup:  Return raw obs for this many steps while stats accumulate.
+    """
+
+    def __init__(
+        self,
+        obs_dim: int,
+        alpha: float = 0.001,
+        clip: float = 5.0,
+        warmup: int = 1000,
+    ) -> None:
+        self._alpha = alpha
+        self._clip = clip
+        self._warmup = warmup
+        self._count = 0
+        self._mean = np.zeros(obs_dim, dtype=np.float64)
+        self._var = np.ones(obs_dim, dtype=np.float64)
+
+    def normalize(self, obs: np.ndarray, update: bool = True) -> np.ndarray:
+        """Normalize *obs* and optionally update running statistics.
+
+        Pass ``update=False`` during evaluation / inference to freeze
+        the normalizer at its training-time state.
+        """
+        if update:
+            self._count += 1
+            x = obs.astype(np.float64)
+            delta = x - self._mean
+            self._mean += self._alpha * delta
+            self._var = (
+                (1.0 - self._alpha) * self._var
+                + self._alpha * delta * (x - self._mean)
+            )
+            self._var = np.maximum(self._var, 1e-6)
+
+        if self._count <= self._warmup:
+            return obs  # return raw during warm-up
+
+        std = np.sqrt(self._var)
+        normed = (obs.astype(np.float64) - self._mean) / (std + 1e-8)
+        return np.clip(normed, -self._clip, self._clip).astype(np.float32)
+
+    def state_dict(self) -> dict:
+        return {
+            "count": self._count,
+            "mean": self._mean.tolist(),
+            "var": self._var.tolist(),
+            "alpha": self._alpha,
+            "clip": self._clip,
+            "warmup": self._warmup,
+        }
+
+    def load_state_dict(self, d: dict) -> None:
+        self._count = int(d["count"])
+        self._mean = np.array(d["mean"], dtype=np.float64)
+        self._var = np.array(d["var"], dtype=np.float64)
+        self._alpha = float(d.get("alpha", self._alpha))
+        self._clip = float(d.get("clip", self._clip))
+        self._warmup = int(d.get("warmup", self._warmup))

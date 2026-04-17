@@ -48,6 +48,7 @@ class InferenceService:
         self.cfg = config
         self._model = None
         self._ort_session = None
+        self._obs_norm = None   # RunningObsNormalizer | None; loaded from checkpoint
         self._log = log.bind(backend=config.backend)
 
     async def start(self) -> None:
@@ -63,8 +64,13 @@ class InferenceService:
     def predict(self, observation: np.ndarray) -> InferenceResult:
         """Run inference on a single observation vector.
 
+        Applies obs normalization (frozen — no update) when the checkpoint
+        contains a RunningObsNormalizer state, then dispatches to the backend.
         Measures latency and logs warnings if exceeding threshold.
         """
+        if self._obs_norm is not None:
+            observation = self._obs_norm.normalize(observation, update=False)
+
         t0 = time.perf_counter()
 
         if self.cfg.backend == InferenceBackend.ONNX and self._ort_session:
@@ -91,6 +97,7 @@ class InferenceService:
     def _load_pytorch(self) -> None:
         import torch
         from smart_trader.agent.meta_controller import MetaController
+        from smart_trader.env.reward import RunningObsNormalizer
 
         ckpt = torch.load(self.cfg.model_path, map_location=self.cfg.device, weights_only=False)
         cfg = ckpt["config"]
@@ -105,6 +112,13 @@ class InferenceService:
         )
         self._model.load(self.cfg.model_path)
         self._model.set_deterministic(True)
+
+        # Restore obs normalizer so inference sees the same distribution as training
+        obs_norm_state = ckpt.get("obs_norm")
+        if obs_norm_state is not None:
+            self._obs_norm = RunningObsNormalizer(cfg["obs_dim"])
+            self._obs_norm.load_state_dict(obs_norm_state)
+            self._log.info("obs_norm_loaded", steps_seen=obs_norm_state.get("count", 0))
 
     def _load_onnx(self) -> None:
         import onnxruntime as ort

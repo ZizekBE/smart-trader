@@ -28,6 +28,7 @@ uv run python scripts/train_rl_agent.py \
 ```
 
 - 续训：`--resume ./checkpoints/run_name/checkpoint_N.pt`。
+- **`--cost-profile conservative`**：训练 `MarketEnv` 与 conservative WF 共用 `sim_profiles`；checkpoint `config` 会记录 `cost_profile` / `train_simulator`。配方与命令见仓库 `docs/rl_train_sim_alignment.md`。
 - 改 `MarketEnv` / `RewardEngine` / 观测维后，需重新对齐 `MetaController` 与 `SpaceConfig`。
 
 ## Walk-forward 评估
@@ -42,6 +43,7 @@ uv run python scripts/eval_walkforward.py \
 
 - `--d-model` / `--n-layers` / `--n-heads` 必须与训练一致。
 - 多品种加载数据须单次 `asyncio.run(load_all_data(...))`（见 `eval_walkforward.py`），避免 asyncpg 事件循环冲突。
+- **`--cost-profile conservative`**：更高摩擦；JSON 写入 `meta.cost_profile` / `meta.simulator`。门禁：`uv run python scripts/wf_conservative_gate.py <wf.eval.json>`（阈值集中在 `configs/wf_gates.json` 的 `profiles`，默认档由 `default_profile` 指定；严档 `--profile target`）。
 
 ## Checkpoint
 

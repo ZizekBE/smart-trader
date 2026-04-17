@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "tuning": "Edit numeric fields under profiles.* only; require_cost_profile applies to all profiles.",
+  "require_cost_profile": "conservative",
+  "default_profile": "shadow",
+  "profiles": {
+    "shadow": {
+      "description": "Minimum bar before paper shadow (run_shadow.py). Tighten after models improve.",
+      "min_mean_return": -0.012,
+      "max_mean_max_dd": 0.1,
+      "min_win_rate": 0.18,
+      "min_mean_sharpe": -8.0,
+      "max_std_return": 0.15
+    },
+    "target": {
+      "description": "Aspirational: steadier folds, lower avg drawdown, positive edge under conservative costs.",
+      "min_mean_return": 0.001,
+      "max_mean_max_dd": 0.045,
+      "min_win_rate": 0.42,
+      "min_mean_sharpe": -0.05,
+      "max_std_return": 0.075
+    }
+  }
+}

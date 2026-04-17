@@ -32,7 +32,11 @@ import torch
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-import structlog
+import structlog  # noqa: E402
+
+from smart_trader.env.sim_profiles import build_sim_config, sim_config_to_meta  # noqa: E402
+from smart_trader.env.simulator import SimulatorConfig  # noqa: E402
+
 structlog.configure(
     processors=[structlog.dev.ConsoleRenderer(colors=True)],
     wrapper_class=structlog.make_filtering_bound_logger(20),
@@ -66,18 +70,26 @@ def parse_args() -> argparse.Namespace:
         help="Path to save results (CSV if .csv, JSON otherwise). "
              "Auto-generated next to checkpoint when omitted.",
     )
+    p.add_argument(
+        "--cost-profile",
+        choices=("default", "conservative"),
+        default="default",
+        help="Simulator fees/slippage/depth for WF folds (conservative = higher friction).",
+    )
     return p.parse_args()
 
 
 async def load_all_data(
-    symbols: list[str], exchange: str,
-) -> dict[str, dict[str, pd.DataFrame]]:
-    """Load candle data for multiple symbols in a single event loop."""
-    from smart_trader.data.storage.database import get_engine
+    symbols: list[str], exchange: str, load_funding_rates: bool = False,
+) -> tuple[dict[str, dict[str, pd.DataFrame]], dict[str, pd.Series]]:
+    """Load candle data (and optionally funding rates) for multiple symbols."""
     from sqlalchemy import text
+
+    from smart_trader.data.storage.database import get_engine
 
     engine = get_engine()
     datasets: dict[str, dict[str, pd.DataFrame]] = {}
+    funding_rates: dict[str, pd.Series] = {}
 
     for symbol in symbols:
         data: dict[str, pd.DataFrame] = {}
@@ -101,7 +113,23 @@ async def load_all_data(
         if data:
             datasets[symbol] = data
 
-    return datasets
+        if load_funding_rates:
+            fr_sql = text("""
+                SELECT time, rate::double precision
+                FROM funding_rates
+                WHERE exchange = :ex AND symbol = :sym
+                ORDER BY time ASC
+            """)
+            async with engine.connect() as conn:
+                fr_rows = await conn.execute(fr_sql, {"ex": exchange, "sym": symbol})
+                fr_data = fr_rows.fetchall()
+            if fr_data:
+                fr_df = pd.DataFrame(fr_data, columns=["time", "rate"])
+                fr_df = fr_df.set_index("time")
+                funding_rates[symbol] = fr_df["rate"].sort_index()
+                log.info("funding_rates_loaded", symbol=symbol, rows=len(fr_df))
+
+    return datasets, funding_rates
 
 
 _LAYER_RE = re.compile(r"^backbone\.encoder\.layers\.(\d+)\.")
@@ -126,10 +154,7 @@ def resolve_arch_from_checkpoint(
 
     d_model = int(cfg.get("d_model", args.d_model))
     n_layers = cfg.get("n_layers")
-    if n_layers is not None:
-        n_layers = int(n_layers)
-    else:
-        n_layers = _infer_n_layers(state)
+    n_layers = int(n_layers) if n_layers is not None else _infer_n_layers(state)
     if n_layers is None:
         n_layers = args.n_layers
 
@@ -157,8 +182,15 @@ def resolve_arch_from_checkpoint(
 
 
 def evaluate_fold(
-    agent, data_slice: dict[str, pd.DataFrame], fold: int, obs_dim: int,
+    agent,
+    data_slice: dict[str, pd.DataFrame],
+    fold: int,
+    obs_dim: int,
     lookback: int = 1,
+    *,
+    sim_config: SimulatorConfig | None = None,
+    microstructure_dim: int = 0,
+    funding_rates: dict[str, pd.Series] | None = None,
 ) -> dict:
     """Run the agent in deterministic mode on a data slice."""
     from smart_trader.data.features.engine import FeatureConfig, compute_features
@@ -174,10 +206,12 @@ def evaluate_fold(
         n_timeframes=len(data_slice),
         features_per_tf=features_per_tf,
         lookback=lookback,
+        microstructure_dim=microstructure_dim,
     )
     primary_tf = "1m" if "1m" in data_slice else list(data_slice.keys())[0]
     max_bars = len(data_slice[primary_tf]) - 1
 
+    sc = sim_config if sim_config is not None else SimulatorConfig()
     env_config = MarketEnvConfig(
         data=data_slice,
         primary_tf=primary_tf,
@@ -185,6 +219,8 @@ def evaluate_fold(
         initial_cash=10_000.0,
         space_config=space_cfg,
         reward_config=RewardConfig(),
+        sim_config=sc,
+        funding_rates=funding_rates or None,
     )
 
     env = MarketEnv(env_config)
@@ -218,6 +254,9 @@ def _run_symbol_folds(
     *,
     verbose: bool = True,
     lookback: int = 1,
+    sim_config: SimulatorConfig | None = None,
+    microstructure_dim: int = 0,
+    funding_rates: dict[str, pd.Series] | None = None,
 ) -> list[dict]:
     """Walk-forward folds for a single symbol."""
     from smart_trader.data.features.engine import FeatureConfig, compute_features
@@ -226,7 +265,7 @@ def _run_symbol_folds(
     sample_feats = compute_features(data["1m"].head(50), FeatureConfig(), prefix="x_")
     features_per_tf = len(sample_feats.columns)
     space_cfg = SpaceConfig(n_timeframes=len(data), features_per_tf=features_per_tf,
-                            lookback=lookback)
+                            lookback=lookback, microstructure_dim=microstructure_dim)
     obs_dim = space_cfg.lookback * space_cfg.market_dim + space_cfg.context_dim
 
     bars_per_day = 24 * 60
@@ -241,9 +280,13 @@ def _run_symbol_folds(
             break
 
         fold_data: dict[str, pd.DataFrame] = {}
+        t_start_fold: pd.Timestamp | None = None
+        t_end_fold: pd.Timestamp | None = None
         for tf, df in data.items():
             if tf == "1m":
                 fold_data[tf] = df.iloc[start_idx:end_idx]
+                t_start_fold = df.index[start_idx]
+                t_end_fold = df.index[min(end_idx, len(df) - 1)]
             else:
                 t_start = data["1m"].index[start_idx]
                 t_end = data["1m"].index[min(end_idx, len(data["1m"]) - 1)]
@@ -253,8 +296,18 @@ def _run_symbol_folds(
         if len(fold_data.get("1m", pd.DataFrame())) < 1000:
             break
 
+        fold_fr: dict[str, pd.Series] | None = None
+        if funding_rates and t_start_fold is not None and t_end_fold is not None:
+            fold_fr = {}
+            for fr_sym, fr_series in funding_rates.items():
+                mask = (fr_series.index >= t_start_fold) & (fr_series.index <= t_end_fold)
+                fold_fr[fr_sym] = fr_series.loc[mask]
+
         t0 = time.monotonic()
-        result = evaluate_fold(agent, fold_data, fold_idx, obs_dim, lookback=lookback)
+        result = evaluate_fold(
+            agent, fold_data, fold_idx, obs_dim, lookback=lookback, sim_config=sim_config,
+            microstructure_dim=microstructure_dim, funding_rates=fold_fr,
+        )
         result["elapsed"] = time.monotonic() - t0
         result["symbol"] = symbol
         results.append(result)
@@ -302,6 +355,7 @@ def save_eval_results(
     all_results: list[dict],
     summary: dict,
     output_path: Path,
+    meta: dict | None = None,
 ) -> None:
     """Persist fold-level results and aggregate summary."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -309,7 +363,9 @@ def save_eval_results(
         df = pd.DataFrame(all_results)
         df.to_csv(output_path, index=False)
     else:
-        payload = {"summary": summary, "folds": all_results}
+        payload: dict = {"summary": summary, "folds": all_results}
+        if meta:
+            payload["meta"] = meta
         with open(output_path, "w") as f:
             json.dump(payload, f, indent=2, default=str)
     log.info("results_saved", path=str(output_path))
@@ -322,12 +378,18 @@ def run_walkforward_eval(
     *,
     verbose: bool = True,
     lookback: int = 1,
+    sim_config: SimulatorConfig | None = None,
+    microstructure_dim: int = 0,
+    funding_rates: dict[str, pd.Series] | None = None,
 ) -> list[dict]:
     """Run all symbols × folds; optionally suppress per-fold lines (for sweeps)."""
     all_results: list[dict] = []
     for sym, sym_data in all_data.items():
-        results = _run_symbol_folds(agent, sym_data, sym, args,
-                                    verbose=verbose, lookback=lookback)
+        results = _run_symbol_folds(
+            agent, sym_data, sym, args,
+            verbose=verbose, lookback=lookback, sim_config=sim_config,
+            microstructure_dim=microstructure_dim, funding_rates=funding_rates,
+        )
         all_results.extend(results)
     return all_results
 
@@ -339,7 +401,15 @@ def main() -> None:
     from smart_trader.data.features.engine import FeatureConfig, compute_features
     from smart_trader.env.spaces import SpaceConfig
 
-    all_data = asyncio.run(load_all_data(args.symbols, args.exchange))
+    # Probe checkpoint to detect if microstructure was used during training
+    ckpt_path_probe = Path(args.checkpoint)
+    raw_ckpt = torch.load(ckpt_path_probe, map_location="cpu", weights_only=False)
+    saved_obs_probe = int((raw_ckpt.get("config") or {}).get("obs_dim", 0))
+    need_fr = saved_obs_probe > 0  # will refine after computing base obs_dim
+
+    all_data, funding_rates = asyncio.run(
+        load_all_data(args.symbols, args.exchange, load_funding_rates=need_fr)
+    )
     all_data = {sym: d for sym, d in all_data.items() if "1m" in d}
 
     if not all_data:
@@ -354,13 +424,20 @@ def main() -> None:
     first_data = list(all_data.values())[0]
     sample_feats = compute_features(first_data["1m"].head(50), FeatureConfig(), prefix="x_")
     features_per_tf = len(sample_feats.columns)
-    space_cfg = SpaceConfig(n_timeframes=len(first_data), features_per_tf=features_per_tf,
-                            lookback=lookback)
-    obs_dim = space_cfg.lookback * space_cfg.market_dim + space_cfg.context_dim
+    # Compute base obs_dim (no microstructure) then detect extra dims from checkpoint
+    space_cfg_base = SpaceConfig(n_timeframes=len(first_data), features_per_tf=features_per_tf,
+                                 lookback=lookback)
+    base_obs_dim = space_cfg_base.lookback * space_cfg_base.market_dim + space_cfg_base.context_dim
 
     saved_obs = arch["saved_obs"]
-    if saved_obs is not None and saved_obs != obs_dim:
-        log.warning("obs_dim_mismatch", from_data=obs_dim, from_checkpoint=saved_obs)
+    microstructure_dim = max(0, (saved_obs - base_obs_dim)) if saved_obs is not None else 0
+    obs_dim = base_obs_dim + microstructure_dim
+
+    if microstructure_dim > 0:
+        log.info("microstructure_detected", microstructure_dim=microstructure_dim,
+                 obs_dim=obs_dim, fr_symbols=list(funding_rates.keys()))
+    elif saved_obs is not None and saved_obs != base_obs_dim:
+        log.warning("obs_dim_mismatch", from_data=base_obs_dim, from_checkpoint=saved_obs)
 
     agent = MetaController(
         obs_dim=obs_dim,
@@ -386,15 +463,29 @@ def main() -> None:
     log.info("agent_loaded", checkpoint=args.checkpoint, obs_dim=obs_dim,
              symbols=list(all_data.keys()))
 
+    sim_config = build_sim_config(args.cost_profile)
+    sim_meta = sim_config_to_meta(sim_config)
+    log.info("wf_simulator", cost_profile=args.cost_profile, **sim_meta)
+
     print(f"\n{'═'*80}")
-    print(f"  Walk-Forward Evaluation — {len(all_data)} symbols × {args.n_folds} folds × {args.test_days}d")
+    n_sym = len(all_data)
+    print(f"  Walk-Forward Evaluation — {n_sym} symbols × {args.n_folds} folds × {args.test_days}d")
+    dp = float(sim_config.depth_profile_usd)
+    print(
+        f"  Cost profile: {args.cost_profile}  |  taker_fee={sim_config.taker_fee:.5f}  "
+        f"maker_fee={sim_config.maker_fee:.5f}  slippage_bps={sim_config.slippage_bps}  "
+        f"depth_usd={dp:,.0f}",
+    )
     print(f"{'═'*80}")
     print(f"  {'Fold':>4}  {'Symbol':>10}  {'Period':>16}  "
           f"{'Return':>8}  {'Sharpe':>8}  {'MaxDD':>8}  {'Trades':>6}")
     print(f"  {'─'*72}")
 
-    all_results = run_walkforward_eval(agent, all_data, args, verbose=True,
-                                       lookback=lookback)
+    all_results = run_walkforward_eval(
+        agent, all_data, args, verbose=True, lookback=lookback, sim_config=sim_config,
+        microstructure_dim=microstructure_dim,
+        funding_rates=funding_rates if microstructure_dim > 0 else None,
+    )
 
     print(f"  {'─'*72}")
 
@@ -419,12 +510,21 @@ def main() -> None:
             print(f"    Mean return: {np.mean(sr):>+.2%}  Win rate: {wr:.0%}  "
                   f"Mean MaxDD: {np.mean([r.get('max_dd', 0) for r in sym_res]):.2%}")
 
-        out_path = args.output
-        if out_path is None:
-            out_path = ckpt_path.with_suffix(".eval.json")
-        else:
-            out_path = Path(out_path)
-        save_eval_results(all_results, agg, out_path)
+        out_path = (
+            ckpt_path.with_suffix(".eval.json")
+            if args.output is None
+            else Path(args.output)
+        )
+        wf_meta = {
+            "checkpoint": str(ckpt_path.resolve()),
+            "symbols": list(args.symbols),
+            "exchange": args.exchange,
+            "n_folds": args.n_folds,
+            "test_days": args.test_days,
+            "cost_profile": args.cost_profile,
+            "simulator": sim_meta,
+        }
+        save_eval_results(all_results, agg, out_path, meta=wf_meta)
 
     print(f"\n{'═'*80}\n")
 

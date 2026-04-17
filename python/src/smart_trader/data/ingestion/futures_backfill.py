@@ -62,13 +62,27 @@ class FuturesBackfillService:
             exchange=adapter.exchange_id,
         )
 
+    @staticmethod
+    def _spot_symbol(futures_symbol: str) -> str:
+        """Normalise to spot-format symbol (strip settle currency after ':').
+
+        ``BTC/USDT:USDT`` → ``BTC/USDT``
+        ``BTC/USDT``      → ``BTC/USDT``  (unchanged)
+        """
+        return futures_symbol.split(":")[0]
+
     async def backfill(
         self,
         symbols: list[str],
         since: datetime,
         until: Optional[datetime] = None,
     ) -> FuturesBackfillResult:
-        """Backfill funding rates and OI for all given futures symbols."""
+        """Backfill funding rates and OI for all given futures symbols.
+
+        Futures symbols (e.g. ``BTC/USDT:USDT``) are normalised to spot
+        format (``BTC/USDT``) before storing so that all tables share a
+        consistent symbol key.
+        """
         until = until or datetime.now(timezone.utc)
         result = FuturesBackfillResult()
 
@@ -107,9 +121,15 @@ class FuturesBackfillService:
         since: datetime,
         until: datetime,
     ) -> tuple[int, int]:
-        """Fetch funding rate history via CCXT's fetchFundingRateHistory."""
+        """Fetch funding rate history via CCXT's fetchFundingRateHistory.
+
+        ``symbol`` is the futures symbol used for API calls (e.g. BTC/USDT:USDT).
+        Stored symbol is normalised to spot format (e.g. BTC/USDT) so all
+        tables share a consistent key.
+        """
         exchange_id = self._adapter.exchange_id
-        self._log.info("fr_backfill_start", symbol=symbol)
+        store_symbol = self._spot_symbol(symbol)
+        self._log.info("fr_backfill_start", symbol=symbol, store_as=store_symbol)
 
         all_rows = []
         cursor_ms = int(since.timestamp() * 1000)
@@ -123,7 +143,7 @@ class FuturesBackfillService:
             if fr:
                 all_rows.append({
                     "time": fr.timestamp,
-                    "symbol": symbol,
+                    "symbol": store_symbol,
                     "exchange": exchange_id,
                     "rate": fr.rate,
                     "next_funding": fr.next_funding_time,
@@ -146,7 +166,7 @@ class FuturesBackfillService:
                         continue
                     all_rows.append({
                         "time": datetime.fromtimestamp(ts / 1000, tz=timezone.utc),
-                        "symbol": symbol,
+                        "symbol": store_symbol,
                         "exchange": exchange_id,
                         "rate": float(entry.get("fundingRate", 0)),
                         "next_funding": None,
@@ -170,22 +190,75 @@ class FuturesBackfillService:
         since: datetime,
         until: datetime,
     ) -> tuple[int, int]:
-        """Fetch OI snapshots. Most exchanges only provide current OI,
-        so we store what we can and build history over time."""
-        exchange_id = self._adapter.exchange_id
-        self._log.info("oi_backfill_start", symbol=symbol)
+        """Fetch OI history when the exchange supports it, otherwise snapshot.
 
+        Binance's /futures/data/openInterestHist endpoint provides up to ~30
+        days of hourly OI via CCXT fetchOpenInterestHistory.  When available,
+        we page through the full since→until range.  Exchanges without the
+        endpoint fall back to a single current snapshot.
+        """
+        exchange_id = self._adapter.exchange_id
+        store_symbol = self._spot_symbol(symbol)
+        self._log.info("oi_backfill_start", symbol=symbol, store_as=store_symbol)
+
+        ccxt_obj = getattr(self._adapter, "_ccxt", None)
+        if ccxt_obj is not None and ccxt_obj.has.get("fetchOpenInterestHistory"):
+            all_rows = []
+            cursor_ms = int(since.timestamp() * 1000)
+            until_ms = int(until.timestamp() * 1000)
+
+            while cursor_ms < until_ms:
+                try:
+                    # timeframe="1h" is standard; limit=500 is Binance's max
+                    raw = await ccxt_obj.fetch_open_interest_history(
+                        symbol, timeframe="1h", since=cursor_ms, limit=500,
+                    )
+                except Exception:
+                    break
+
+                if not raw:
+                    break
+
+                for entry in raw:
+                    ts = entry.get("timestamp", 0)
+                    if ts > until_ms:
+                        continue
+                    oi_usd = (
+                        entry.get("openInterestValue")
+                        or entry.get("openInterest", 0)
+                    )
+                    all_rows.append({
+                        "time": datetime.fromtimestamp(ts / 1000, tz=timezone.utc),
+                        "symbol": store_symbol,
+                        "exchange": exchange_id,
+                        "value_usd": float(oi_usd),
+                    })
+
+                last_ts = raw[-1].get("timestamp", 0)
+                if last_ts <= cursor_ms:
+                    break
+                cursor_ms = last_ts + 1
+                await asyncio.sleep(self._page_delay)
+
+            if not all_rows:
+                return 0, 0
+
+            inserted = await self._upsert_open_interest(all_rows)
+            self._log.info("oi_history_fetched", symbol=symbol,
+                           fetched=len(all_rows), inserted=inserted)
+            return len(all_rows), inserted
+
+        # Fallback: current snapshot only
         oi = await self._adapter.fetch_open_interest(symbol)
         if oi is None:
             return 0, 0
 
         rows = [{
             "time": oi.timestamp,
-            "symbol": symbol,
+            "symbol": store_symbol,
             "exchange": exchange_id,
             "value_usd": oi.value,
         }]
-
         inserted = await self._upsert_open_interest(rows)
         return 1, inserted
 
@@ -195,7 +268,9 @@ class FuturesBackfillService:
             for i in range(0, len(rows), 500):
                 chunk = rows[i:i + 500]
                 stmt = pg_insert(FundingRateRecord).values(chunk)
-                stmt = stmt.on_conflict_do_nothing(constraint="idx_fr_uniq")
+                stmt = stmt.on_conflict_do_nothing(
+                    index_elements=["symbol", "exchange", "time"]
+                )
                 result = await session.execute(stmt)
                 total += result.rowcount
             await session.commit()
@@ -203,8 +278,14 @@ class FuturesBackfillService:
 
     async def _upsert_open_interest(self, rows: list[dict]) -> int:
         async with self._factory() as session:
-            stmt = pg_insert(OpenInterestRecord).values(rows)
-            stmt = stmt.on_conflict_do_nothing(constraint="idx_oi_uniq")
-            result = await session.execute(stmt)
+            total = 0
+            for i in range(0, len(rows), 500):
+                chunk = rows[i:i + 500]
+                stmt = pg_insert(OpenInterestRecord).values(chunk)
+                stmt = stmt.on_conflict_do_nothing(
+                    index_elements=["symbol", "exchange", "time"]
+                )
+                result = await session.execute(stmt)
+                total += result.rowcount
             await session.commit()
-            return result.rowcount
+        return total

@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 
 from smart_trader.data.features.engine import FeatureConfig, compute_features
-from smart_trader.env.reward import RewardConfig, RewardEngine
+from smart_trader.env.reward import RewardConfig, RewardEngine, RunningObsNormalizer
 from smart_trader.env.simulator import (
     FillModel,
     MarketSimulator,
@@ -50,6 +50,15 @@ class MarketEnvConfig:
     feature_config: FeatureConfig = field(default_factory=FeatureConfig)
     space_config: SpaceConfig = field(default_factory=SpaceConfig)
     seed: int = 42
+    # Observation normalization (EMA per-dimension z-score)
+    normalize_obs: bool = True
+    obs_norm_alpha: float = 0.001   # EMA step; adapts over ~1 000 steps
+    obs_norm_clip: float = 5.0      # symmetric clamp after normalization
+    obs_norm_warmup: int = 1000     # steps before normalization activates
+    # Microstructure features (optional; requires data coverage gate to pass)
+    # funding_rates: {symbol → pd.Series(rate, index=time)} from funding_rates table
+    # open_interest: {symbol → pd.Series(value_usd, index=time)} — deferred until ≥6 months
+    funding_rates: dict | None = None  # dict[str, pd.Series]
 
 
 class MarketEnv(gym.Env):
@@ -69,8 +78,26 @@ class MarketEnv(gym.Env):
         self._reward_engine = RewardEngine(self.cfg.reward_config)
 
         self._build_datasets()
+        # Funding rate lookup: {symbol → pd.Series sorted by time}
+        self._fr_by_sym: dict[str, pd.Series] = {}
+        if self.cfg.funding_rates:
+            for sym, s in self.cfg.funding_rates.items():
+                self._fr_by_sym[sym] = s.sort_index()
+        self._cur_fr: pd.Series | None = None
+
         self._select_symbol(list(self._all_features.keys())[0])
         self._reset_state()
+
+        obs_dim = self.observation_space.shape[0]
+        self._obs_norm: RunningObsNormalizer | None = (
+            RunningObsNormalizer(
+                obs_dim,
+                alpha=self.cfg.obs_norm_alpha,
+                clip=self.cfg.obs_norm_clip,
+                warmup=self.cfg.obs_norm_warmup,
+            )
+            if self.cfg.normalize_obs else None
+        )
 
     # ── Gym interface ──────────────────────────────────────────
 
@@ -177,6 +204,7 @@ class MarketEnv(gym.Env):
         self._features = self._all_features[sym]
         self._primary_data = self._all_primary[sym]
         self._warmup_bars = min(200, len(self._primary_data) // 4)
+        self._cur_fr = self._fr_by_sym.get(sym)
 
     def _get_bar(self, idx: int) -> dict:
         row = self._primary_data.iloc[idx]
@@ -239,7 +267,24 @@ class MarketEnv(gym.Env):
             dd,
         ], dtype=np.float32)
 
-        micro = np.zeros(sc.microstructure_dim, dtype=np.float32) if sc.microstructure_dim > 0 else np.empty(0, dtype=np.float32)
+        if sc.microstructure_dim > 0:
+            micro_vals: list[float] = []
+            if self._step < len(self._primary_data):
+                ts = self._primary_data.index[self._step]
+                # Funding rate: 8h-interval series; asof() returns last entry ≤ ts
+                if self._cur_fr is not None and len(self._cur_fr) > 0:
+                    val = self._cur_fr.asof(ts)
+                    micro_vals.append(float(val) if not pd.isna(val) else 0.0)
+                else:
+                    micro_vals.append(0.0)
+            else:
+                micro_vals.extend([0.0] * sc.microstructure_dim)
+            # Pad or trim to exactly microstructure_dim
+            while len(micro_vals) < sc.microstructure_dim:
+                micro_vals.append(0.0)
+            micro = np.array(micro_vals[:sc.microstructure_dim], dtype=np.float32)
+        else:
+            micro = np.empty(0, dtype=np.float32)
 
         if self._step < len(self._primary_data):
             ts = self._primary_data.index[self._step]
@@ -265,6 +310,9 @@ class MarketEnv(gym.Env):
             obs = np.pad(obs, (0, expected - len(obs)))
         elif len(obs) > expected:
             obs = obs[:expected]
+
+        if self._obs_norm is not None:
+            obs = self._obs_norm.normalize(obs)
         return obs
 
     # ── execution logic ────────────────────────────────────────

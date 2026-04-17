@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import sys
 import time
 from pathlib import Path
@@ -23,7 +24,8 @@ import pandas as pd
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-import structlog
+import structlog  # noqa: E402
+
 structlog.configure(
     processors=[structlog.dev.ConsoleRenderer(colors=True)],
     wrapper_class=structlog.make_filtering_bound_logger(20),
@@ -36,7 +38,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--symbols", nargs="+", default=["BTC/USDT"],
                     help="One or more symbols (e.g. BTC/USDT ETH/USDT)")
     p.add_argument("--timesteps", type=int, default=10_000)
-    p.add_argument("--d-model", type=int, default=64, help="Transformer hidden dim (smaller = faster)")
+    p.add_argument(
+        "--d-model",
+        type=int,
+        default=64,
+        help="Transformer hidden dim (smaller = faster)",
+    )
     p.add_argument("--n-layers", type=int, default=1, help="Transformer layers")
     p.add_argument("--n-heads", type=int, default=4)
     p.add_argument("--lr", type=float, default=3e-4)
@@ -47,31 +54,93 @@ def parse_args() -> argparse.Namespace:
                     help="Bars of history in the observation sequence (1 = legacy flat)")
     p.add_argument("--patience", type=int, default=10,
                     help="Early-stop after this many evals without best_eval improvement")
-    p.add_argument("--weight-decay", type=float, default=1e-5,
-                    help="AdamW L2 (stronger e.g. 3e-5 can reduce OOS variance for seq obs)")
-    p.add_argument("--trade-penalty", type=float, default=0.01,
+    p.add_argument("--n-epochs", type=int, default=8,
+                    help="PPO update epochs per rollout (was hardcoded 4; higher = better sample efficiency)")
+    p.add_argument("--eval-episodes", type=int, default=15,
+                    help="Episodes per eval pass (higher = less noise in early stopping signal)")
+    p.add_argument("--weight-decay", type=float, default=2e-5,
+                    help="AdamW L2 (higher = less OOS variance; default nudged for RL stability)")
+    p.add_argument("--trade-penalty", type=float, default=0.02,
                     help="RewardEngine churn penalty per trade (higher = less frequent trades)")
+    p.add_argument(
+        "--cost-profile",
+        choices=("default", "conservative"),
+        default="default",
+        help="MarketEnv simulator fees/slippage; use conservative to match conservative WF.",
+    )
+    p.add_argument(
+        "--entropy-coef",
+        type=float,
+        default=0.02,
+        help="PPO entropy bonus at start of training (linearly decays to --entropy-coef-end).",
+    )
+    p.add_argument(
+        "--entropy-coef-end",
+        type=float,
+        default=0.004,
+        help="Entropy bonus at end of schedule (slightly lower default = less late noise).",
+    )
     p.add_argument("--checkpoint-dir", default="./checkpoints")
     p.add_argument("--resume", default=None, help="Path to checkpoint .pt to resume from")
     p.add_argument("--exchange", default=None, help="Filter by exchange (binance, gateio)")
     p.add_argument("--device", default="cpu", choices=["cpu", "cuda", "mps"])
     p.add_argument("--per-symbol", action="store_true",
                     help="Train a separate model for each symbol")
+    p.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="RNG seed for NumPy, PyTorch, and MarketEnv (reproducibility).",
+    )
     return p.parse_args()
+
+
+def _merge_train_meta_into_checkpoints(save_dir: Path, meta: dict) -> None:
+    """Persist training frictions into checkpoint ``config`` for traceability."""
+    import torch
+
+    for name in ("final_agent.pt", "best_agent.pt"):
+        p = save_dir / name
+        if not p.is_file():
+            continue
+        ckpt = torch.load(p, map_location="cpu", weights_only=False)
+        cfg = ckpt.setdefault("config", {})
+        for k, v in meta.items():
+            cfg[k] = v
+        torch.save(ckpt, p)
+
+
+def _set_global_seed(seed: int) -> None:
+    import random
+
+    import torch
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+        with contextlib.suppress(AttributeError):
+            torch.mps.manual_seed(seed)
 
 
 async def load_data(
     symbols: list[str], exchange: str | None = None,
-) -> dict[str, dict[str, pd.DataFrame]]:
-    """Load candle data for one or more symbols.
+) -> tuple[dict[str, dict[str, pd.DataFrame]], dict[str, pd.Series]]:
+    """Load candle data and funding rates for one or more symbols.
 
-    Returns ``{symbol: {timeframe: DataFrame}}``.
+    Returns ``(candles, funding_rates)`` where:
+      - ``candles``       = ``{symbol: {timeframe: DataFrame}}``
+      - ``funding_rates`` = ``{symbol: pd.Series(rate, index=time)}``
     """
-    from smart_trader.data.storage.database import get_engine
     from sqlalchemy import text
+
+    from smart_trader.data.storage.database import get_engine
 
     engine = get_engine()
     datasets: dict[str, dict[str, pd.DataFrame]] = {}
+    funding_rates: dict[str, pd.Series] = {}
 
     for symbol in symbols:
         data: dict[str, pd.DataFrame] = {}
@@ -111,16 +180,50 @@ async def load_data(
         if data:
             datasets[symbol] = data
 
-    return datasets
+        # Load funding rates (8h interval, historical via fetchFundingRateHistory)
+        fr_where = "symbol = :sym"
+        fr_params: dict = {"sym": symbol}
+        if exchange:
+            fr_where += " AND exchange = :ex"
+            fr_params["ex"] = exchange
+        fr_sql = text(f"""
+            SELECT time, rate::double precision
+            FROM funding_rates
+            WHERE {fr_where}
+            ORDER BY time ASC
+        """)
+        async with engine.connect() as conn:
+            fr_result = await conn.execute(fr_sql, fr_params)
+            fr_rows = fr_result.fetchall()
+        if fr_rows:
+            fr_df = pd.DataFrame(fr_rows, columns=["time", "rate"]).set_index("time")
+            funding_rates[symbol] = fr_df["rate"]
+            log.info("funding_rates_loaded", symbol=symbol, rows=len(fr_df),
+                     start=str(fr_df.index[0]), end=str(fr_df.index[-1]))
+        else:
+            log.warning("no_funding_rates", symbol=symbol)
+
+    return datasets, funding_rates
 
 
-def train(args: argparse.Namespace, datasets: dict[str, dict[str, pd.DataFrame]]) -> None:
+def train(
+    args: argparse.Namespace,
+    datasets: dict[str, dict[str, pd.DataFrame]],
+    funding_rates: dict[str, pd.Series] | None = None,
+) -> None:
     from smart_trader.agent.meta_controller import MetaController
     from smart_trader.agent.trainer import PPOConfig, PPOTrainer
     from smart_trader.data.features.engine import FeatureConfig, compute_features
     from smart_trader.env.market_env import MarketEnv, MarketEnvConfig
     from smart_trader.env.reward import RewardConfig
+    from smart_trader.env.sim_profiles import build_sim_config, sim_config_to_meta
     from smart_trader.env.spaces import SpaceConfig
+
+    _set_global_seed(args.seed)
+    log.info("seed_set", seed=args.seed)
+
+    sim_config = build_sim_config(args.cost_profile)
+    log.info("train_simulator", cost_profile=args.cost_profile, **sim_config_to_meta(sim_config))
 
     first_sym = list(datasets.keys())[0]
     first_data = datasets[first_sym]
@@ -132,10 +235,17 @@ def train(args: argparse.Namespace, datasets: dict[str, dict[str, pd.DataFrame]]
              columns=list(sample_feats.columns)[:5])
 
     n_tf = len(first_data)
+    # microstructure_dim = 1 when funding rates are available (FR only; OI deferred until ≥6m history)
+    micro_dim = 1 if funding_rates else 0
+    if micro_dim:
+        covered = [s for s in datasets if s in funding_rates]
+        log.info("microstructure_enabled", dim=micro_dim,
+                 symbols_with_fr=covered, total_symbols=len(datasets))
     space_cfg = SpaceConfig(
         n_timeframes=n_tf,
         features_per_tf=actual_features_per_tf,
         lookback=args.lookback,
+        microstructure_dim=micro_dim,
     )
 
     primary_tf = "1m" if "1m" in first_data else list(first_data.keys())[0]
@@ -151,6 +261,9 @@ def train(args: argparse.Namespace, datasets: dict[str, dict[str, pd.DataFrame]]
         initial_cash=10_000.0,
         space_config=space_cfg,
         reward_config=RewardConfig(trade_penalty=args.trade_penalty),
+        sim_config=sim_config,
+        seed=args.seed,
+        funding_rates=funding_rates or None,
     )
 
     env = MarketEnv(env_config)
@@ -187,10 +300,11 @@ def train(args: argparse.Namespace, datasets: dict[str, dict[str, pd.DataFrame]]
         lr=args.lr,
         n_steps=args.n_steps,
         batch_size=args.batch_size,
-        n_epochs=4,
-        entropy_coef=0.02,
+        n_epochs=args.n_epochs,
+        entropy_coef=args.entropy_coef,
+        entropy_coef_end=args.entropy_coef_end,
         eval_freq=5,
-        eval_episodes=5,
+        eval_episodes=args.eval_episodes,
         patience=args.patience,
         weight_decay=args.weight_decay,
     )
@@ -204,6 +318,10 @@ def train(args: argparse.Namespace, datasets: dict[str, dict[str, pd.DataFrame]]
         rn_state = meta.get("reward_norm")
         if rn_state:
             trainer._reward_norm.load_state_dict(rn_state)
+        obs_norm_state = meta.get("obs_norm")
+        if obs_norm_state and getattr(env, "_obs_norm", None) is not None:
+            env._obs_norm.load_state_dict(obs_norm_state)
+            log.info("obs_norm_restored", steps_seen=obs_norm_state.get("count", 0))
         log.info("resumed_from_checkpoint", path=args.resume, step=resume_step)
 
     sym_str = ", ".join(datasets.keys())
@@ -219,9 +337,14 @@ def train(args: argparse.Namespace, datasets: dict[str, dict[str, pd.DataFrame]]
     print(f"  patience:   {args.patience}")
     print(f"  weight_dec: {args.weight_decay}")
     print(f"  trade_pen:  {args.trade_penalty}")
+    print(f"  cost_prof:  {args.cost_profile}")
+    print(f"  ent_coef:   {args.entropy_coef} -> {args.entropy_coef_end}")
     print(f"  n_steps:    {args.n_steps}")
+    print(f"  n_epochs:   {args.n_epochs}")
+    print(f"  eval_eps:   {args.eval_episodes}")
     print(f"  batch_size: {args.batch_size}")
     print(f"  max_episode:{max_episode}")
+    print(f"  seed:       {args.seed}")
     print(f"{'═'*60}\n")
 
     t0 = time.monotonic()
@@ -238,6 +361,20 @@ def train(args: argparse.Namespace, datasets: dict[str, dict[str, pd.DataFrame]]
     save_dir.mkdir(parents=True, exist_ok=True)
     save_path = save_dir / "final_agent.pt"
     agent.save(save_path)
+
+    _merge_train_meta_into_checkpoints(
+        save_dir,
+        {
+            "cost_profile": args.cost_profile,
+            "trade_penalty": args.trade_penalty,
+            "train_simulator": sim_config_to_meta(sim_config),
+            "weight_decay": args.weight_decay,
+            "entropy_coef": args.entropy_coef,
+            "entropy_coef_end": args.entropy_coef_end,
+            "n_epochs": args.n_epochs,
+            "eval_episodes": args.eval_episodes,
+        },
+    )
 
     # report
     updates = stats.get("updates", [])
@@ -266,7 +403,7 @@ def train(args: argparse.Namespace, datasets: dict[str, dict[str, pd.DataFrame]]
 
 def main() -> None:
     args = parse_args()
-    datasets = asyncio.run(load_data(args.symbols, exchange=args.exchange))
+    datasets, funding_rates = asyncio.run(load_data(args.symbols, exchange=args.exchange))
 
     if not datasets:
         log.error("no_data_available", hint="Run: uv run python scripts/backfill_data.py first")
@@ -278,9 +415,10 @@ def main() -> None:
             safe = sym.replace("/", "_")
             args.checkpoint_dir = f"{base_dir}/{safe}"
             log.info("per_symbol_training", symbol=sym)
-            train(args, {sym: datasets[sym]})
+            sym_fr = {sym: funding_rates[sym]} if sym in funding_rates else None
+            train(args, {sym: datasets[sym]}, sym_fr)
     else:
-        train(args, datasets)
+        train(args, datasets, funding_rates or None)
 
 
 if __name__ == "__main__":

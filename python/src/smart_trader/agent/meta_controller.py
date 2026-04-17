@@ -84,11 +84,14 @@ class MetaController:
         self._deterministic = flag
 
     def _deterministic_action(self, features: torch.Tensor) -> dict:
-        pos_mu, _, risk_mu, _, hold_logits = self.network.policy(features)
+        pos_mu, _, risk_alpha, risk_beta, hold_logits = self.network.policy(features)
+        # Beta mode = (α − 1) / (α + β − 2); valid since softplus+1 guarantees α, β > 1
+        risk_mode_01 = (risk_alpha - 1.0) / (risk_alpha + risk_beta - 2.0 + 1e-8)
+        risk_budget = risk_mode_01 * 0.09 + 0.01
         return {
-            "position": np.clip(np.tanh(pos_mu.cpu().numpy().flatten()), -1, 1),
-            "risk_budget": np.clip(risk_mu.cpu().numpy().flatten(), 0.01, 0.10),
-            "hold_bars": int(hold_logits.argmax(-1).item()),
+            "position":    np.clip(np.tanh(pos_mu.cpu().numpy().flatten()), -1, 1),
+            "risk_budget": np.clip(risk_budget.cpu().numpy().flatten(), 0.01, 0.10),
+            "hold_bars":   int(hold_logits.argmax(-1).item()),
         }
 
     # ── serialization ──────────────────────────────────────────

@@ -121,10 +121,28 @@ uv run python scripts/run_hybrid_backtest.py
 
 ```bash
 uv run python scripts/train_rl_agent.py --symbols BTC/USDT ETH/USDT --exchange binance --timesteps 500000
+# ETH + conservative：训练 / WF / 门禁与 ../docs/rl_train_sim_alignment.md 一致（在 python/ 下执行）：
+uv run python scripts/train_rl_agent.py \
+  --symbols ETH/USDT --exchange binance --cost-profile conservative \
+  --trade-penalty 0.035 --patience 45 --max-episode 3200 --weight-decay 2.5e-5 \
+  --timesteps 500000 --n-steps 2048 --batch-size 256 --seed 42 \
+  --checkpoint-dir ./checkpoints/eth_conservative_aligned_v1
+uv run python scripts/eval_walkforward.py \
+  --checkpoint ./checkpoints/eth_conservative_aligned_v1/best_agent.pt \
+  --symbols ETH/USDT --exchange binance --n-folds 20 --test-days 7 \
+  --cost-profile conservative \
+  --output ./checkpoints/eth_conservative_aligned_v1/wf_eth.eval.json
+uv run python scripts/wf_conservative_gate.py ./checkpoints/eth_conservative_aligned_v1/wf_eth.eval.json
 uv run python scripts/eval_walkforward.py --checkpoint ./checkpoints/xxx.pt --symbols BTC/USDT ETH/USDT --exchange binance
+# 保守执行成本（更高手续费/滑点/更浅深度），结果 JSON 会带 meta.cost_profile / meta.simulator：
+uv run python scripts/eval_walkforward.py --checkpoint ./checkpoints/xxx.pt --symbols ETH/USDT --exchange binance \
+  --cost-profile conservative --output ./checkpoints/xxx_wf_conservative.eval.json
+# 对 conservative WF 摘要做门槛检查（默认 configs/wf_gates.json 的 default_profile，多为 shadow；严档加 --profile target）：
+uv run python scripts/wf_conservative_gate.py ./checkpoints/xxx_wf_conservative.eval.json
+uv run python scripts/wf_conservative_gate.py ./checkpoints/xxx_wf_conservative.eval.json --profile target
 ```
 
-训练脚本默认 **`--d-model 64 --n-layers 1 --n-heads 4`**。`eval_walkforward.py` 使用**相同默认**；保存 checkpoint 时会在 `config` 里写入 `d_model` / `n_layers` / `n_heads`（旧文件会从权重里推断层数）。若仍出现 `state_dict` 加载错误，请显式传入与训练一致的 `--d-model`、`--n-layers`、`--n-heads`。
+训练脚本默认 **`--d-model 64 --n-layers 1 --n-heads 4`**；默认 **`--trade-penalty 0.02`**、**`--weight-decay 2e-5`**、**`--entropy-coef-end 0.004`**（可用 CLI 覆盖）。`--cost-profile conservative` 与 `eval_walkforward.py --cost-profile conservative` 共用 `smart_trader.env.sim_profiles`。`eval_walkforward.py` 使用**相同架构默认**；`best_agent.pt` / `final_agent.pt` 的 `config` 会附带 `cost_profile` / `train_simulator` 等训练元数据（旧 checkpoint 无此字段不影响加载）。若出现 `state_dict` 错误，请显式传入与训练一致的 `--d-model`、`--n-layers`、`--n-heads`。
 
 批量对比多个 checkpoint（早停探测，数据只加载一次）：
 

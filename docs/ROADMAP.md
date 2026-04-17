@@ -1,7 +1,9 @@
 # Smart-Trader Roadmap
 
 > 本文档记录从 POC 到生产级 AI 原生交易系统的演进路径。
-> 最后更新：2026-04-13
+> 最后更新：2026-04-16
+>
+> **Jira 式分解（Epic / Story / Task）**：[`docs/implementation_todos.md`](implementation_todos.md)。
 
 ---
 
@@ -10,11 +12,68 @@
 | 领域 | 状态 | 说明 |
 |------|------|------|
 | **规则引擎** | 生产默认 | `trader --mode rule`；趋势 / 波动率 / 信号 / 风控 / 执行链路稳定运行。 |
-| **RL 实验线** | 可训可评可影子跑 | `scripts/train_rl_agent.py`（PPO）+ `MarketEnv`；观测含多周期特征与 **序列 lookback**；`scripts/eval_walkforward.py` 做 **20 折 × N 天** OOS；`trader --mode rl` / `shadow` + `InferenceConfig.shadow_mode` 做线上/纸面对照。 |
+| **RL 实验线** | 可训可评可影子跑 | `scripts/train_rl_agent.py`（PPO）+ `MarketEnv`；观测含多周期特征与 **序列 lookback**；`scripts/eval_walkforward.py` 做 **20 折 × N 天** OOS；`trader --mode rl` / `shadow` + `InferenceConfig.shadow_mode` 做线上/纸面对照。**训练与 conservative WF 摩擦对齐**（`--cost-profile`、checkpoint 元数据）见 `docs/rl_train_sim_alignment.md`。 |
 | **OOS 结论（当前数据）** | 持续迭代 | 在统一 walk-forward（如 14 天窗口）下，**`v8_seq_reg` 系列**（`trade_penalty≈0.02`、适度正则）整体优于单纯加长步数（`v8_seq_reg_long`）或偏低惩罚版本；**`v7_long`** 仍为另一套骨干规模下的对照基线。图表见仓库根 `README.md` / `docs/assets/model_oos_comparison.svg`（由 `scripts/render_model_comparison_charts.py` 从本地 `checkpoints` 评估 JSON 生成）。 |
 | **数据** | 多交易所适配 | 业务侧经 `ExchangeAdapter` / `create_adapter()`；RL 训练/回测常用 Binance 库内蜡烛；`bulk_backfill` 等脚本用于缺口回补（详见 `python` 内脚本与 skill）。 |
 | **ML 信号过滤（Phase 1.1）** | 未开始 | LightGBM 后置过滤器仍属规划，与当前规则引擎并行开发优先级可按业务排期。 |
 | **工程** | 并行推进 | Prometheus/Grafana 等仍在路线图 Phase 4；Rust 执行引擎仍为激活目标而非默认路径。 |
+| **OOS / RL 迭代登记** | 进行中 | **`EPIC-OOS` 部分已完成**（运行角色、WF 默认参数、数据探活）；基线路径与双人复现待补。详见下方 **「迭代进度与冻结约定」**；`configs/README.md` 为配置目录入口。 |
+| **RL Bug 修复与优化** | 新增（待启动） | 代码审查发现 3 处正确性 Bug（GAE bootstrap、n_epochs 硬编码、risk_budget log_prob 错配）及 4 类性能优化（Transformer 末 token、state-dep std、观测归一化、微结构特征）。已拆分为 `EPIC-RL-OPT`，详见 `docs/implementation_todos.md`。 |
+
+---
+
+## 迭代进度与冻结约定（相对 `implementation_todos.md`）
+
+> 与 [`docs/implementation_todos.md`](implementation_todos.md) 中 **EPIC-OOS / EPIC-RL** 同步。此处为**单一事实来源**：完成后在此更新；详细 Task 勾选仍在 `implementation_todos.md`。
+
+### Epic `EPIC-OOS` — OOS 协议与生产角色
+
+| Story | 状态 | 说明 |
+|------|------|------|
+| **ST-OOS-01** 生产与实验角色 | **已完成** | 见下「运行角色约定」；`configs/README.md` 已链到本节。 |
+| **ST-OOS-02** RL WF 评估协议（书面） | **部分完成** | 下表为冻结默认值；**T-OOS-02-5**（第二人同命令复现）仍待验收。 |
+| **ST-OOS-03** 基线与数据就绪 | **部分完成** | **T-OOS-03-2**：开发环境已对 `ETH/USDT` + `binance` 执行 `load_data`，1m/1h/4h 均有数据（2026-04-12）。**T-OOS-03-1** 基线路径见下表，**待登记**。 |
+
+#### 运行角色约定（ST-OOS-01）
+
+- **生产默认下单**：`trader --mode rule`（规则引擎：趋势 / 波动 / 信号 / 风控 / 执行）。
+- **RL 智能体**：仅用于 **`trader --mode rl`** 在非生产或已授权环境，或 **`shadow` / `InferenceConfig.shadow_mode`** 与规则对照；**禁止**在未书面变更本节前将 RL 设为生产默认执行路径。
+
+#### RL walk-forward 默认协议（ST-OOS-02，书面冻结）
+
+| 项 | 冻结默认值 | 备注 |
+|----|------------|------|
+| 主推进品种 | `ETH/USDT` | 增加或改为 BTC 时须更新本表并固定一次完整 WF |
+| `eval_walkforward.py` `--exchange` | `binance` | 与库内 `candles.exchange` 一致 |
+| `--n-folds` | `20` | |
+| `--test-days` | `7` | 若改 14 等窗口，须同步更新本表与对比实验说明 |
+| `--cost-profile`（对齐实验） | `conservative` | 与 `train_rl_agent.py` 训练侧**必须同值**；见 `docs/rl_train_sim_alignment.md` |
+| 门禁 | `wf_conservative_gate.py` **默认档** `shadow`（`configs/wf_gates.json` 的 `default_profile`） | 严档显式加 `--profile target` |
+
+#### 对照基线登记（ST-OOS-03）
+
+| 角色 | 标签 / 说明 | 路径或指针 | 状态 |
+|------|-------------|------------|------|
+| 规则、无 RL | *待登记* | — | [ ] |
+| RL 候选 checkpoint | *待登记* | — | [ ] |
+
+### Epic `EPIC-RL` — 管线硬化（仅登记已书面项）
+
+| Story | 状态 | 说明 |
+|------|------|------|
+| **ST-RL-02** 权重约定 | **部分完成** | **T-RL-02-1**：部署、WF 与影子推理**优先 `best_agent.pt`**，不用 `final_agent.pt` 作默认——见下文 **§3.4 强化学习策略进化**。**T-RL-02-2**（各 run 目录 README）仍由各 run 负责人补。 |
+| **ST-RL-01** / **ST-RL-03** | 未在本文登记完成 | 须完成「conservative 全链长跑 + 归档 JSON」后再改此处为已完成。 |
+
+### Epic `EPIC-RL-OPT` — RL 训练正确性修复与架构优化
+
+> 详细 Task 见 `docs/implementation_todos.md` → `EPIC-RL-OPT`。
+
+| Story | 状态 | 说明 |
+|------|------|------|
+| **ST-OPT-01** 训练正确性 Bug | **已完成** | T-OPT-01-1（GAE bootstrap）、T-OPT-01-2（`n_epochs` CLI 化）、T-OPT-01-3（risk_budget → Beta 分布）全部落地。 |
+| **ST-OPT-02** 评估稳定性 | **部分完成** | T-OPT-02-1（`eval_episodes` 15 + CLI）已落地；T-OPT-02-2（滑动均值早停）可选。 |
+| **ST-OPT-03** 网络架构优化 | **已完成** | T-OPT-03-1（末 token）、T-OPT-03-2（state-dep std）已落地。T-OPT-03-3：v9 烟雾测试 2026-04-16 通过（5000 steps, ETH/USDT, conservative）；全量 conservative 重训 CLI 已记录；对比 WF 图标为 optional。 |
+| **ST-OPT-04** 观测空间扩展 | **已完成** | T-OPT-04-1（Running obs normalization）、T-OPT-04-2（FR backfill + coverage 100%）、T-OPT-04-3（FR 特征集成，obs_dim 70→71，microstructure_dim=1）全部落地（2026-04-16）。OI 已有 30 天数据但训练覆盖率 < 2%，暂缓至 ≥ 6 个月后接入。 |
 
 ---
 

@@ -61,10 +61,14 @@ class RolloutBuffer:
     rewards: list = field(default_factory=list)
     values: list = field(default_factory=list)
     dones: list = field(default_factory=list)
+    terminateds: list = field(default_factory=list)    # True only on genuine game-over
+    truncateds: list = field(default_factory=list)     # True when episode ended by timeout
+    bootstrap_values: list = field(default_factory=list)  # V(s_{t+1}) for truncated steps
 
     def clear(self) -> None:
         for lst in (self.observations, self.actions, self.log_probs,
-                    self.rewards, self.values, self.dones):
+                    self.rewards, self.values, self.dones,
+                    self.terminateds, self.truncateds, self.bootstrap_values):
             lst.clear()
 
     def __len__(self) -> int:
@@ -125,7 +129,7 @@ class PPOTrainer:
         )
 
         while step < total_timesteps:
-            rollout_reward = self._collect_rollout()
+            rollout_reward, last_obs = self._collect_rollout()
             episode_rewards.append(rollout_reward)
             step += len(self.buffer)
 
@@ -139,7 +143,7 @@ class PPOTrainer:
             for pg in self.optimizer.param_groups:
                 pg["lr"] = new_lr
 
-            stats = self._update()
+            stats = self._update(last_obs)
             stats["rollout_reward"] = rollout_reward
             stats["total_steps"] = step
             all_stats.append(stats)
@@ -170,7 +174,7 @@ class PPOTrainer:
                     Path(checkpoint_dir) / f"checkpoint_{update}.pt",
                     optimizer=self.optimizer,
                     step=step,
-                    extra={"reward_norm": self._reward_norm.state_dict()},
+                    extra=self._checkpoint_extra(),
                 )
 
             if update % self.cfg.eval_freq == 0:
@@ -189,7 +193,7 @@ class PPOTrainer:
                             Path(checkpoint_dir) / "best_agent.pt",
                             optimizer=self.optimizer,
                             step=step,
-                            extra={"reward_norm": self._reward_norm.state_dict()},
+                            extra=self._checkpoint_extra(),
                         )
                         log.info("new_best_saved", eval_reward=f"{eval_reward:.4f}",
                                  step=step)
@@ -214,6 +218,19 @@ class PPOTrainer:
             "best_eval_reward": best_eval_reward,
             "updates": all_stats,
         }
+
+    def _checkpoint_extra(self) -> dict:
+        """Build the ``extra`` payload saved alongside every checkpoint.
+
+        Includes reward normalizer state and, when the env has a running
+        obs normalizer, its state — so inference can reproduce the same
+        normalization without seeing any training data.
+        """
+        extra: dict = {"reward_norm": self._reward_norm.state_dict()}
+        obs_norm = getattr(self.env, "_obs_norm", None)
+        if obs_norm is not None:
+            extra["obs_norm"] = obs_norm.state_dict()
+        return extra
 
     @staticmethod
     def _make_tb_writer(checkpoint_dir: str | Path | None) -> SummaryWriter | None:
@@ -246,17 +263,32 @@ class PPOTrainer:
         self.agent.network.train()
         return float(np.mean(total_rewards))
 
-    def _collect_rollout(self) -> float:
-        """Collect n_steps of experience into the buffer."""
+    def _collect_rollout(self) -> tuple[float, np.ndarray]:
+        """Collect n_steps of experience into the buffer.
+
+        Returns:
+            (raw_reward_sum, last_obs) — last_obs is the observation *after*
+            the final rollout step, used to bootstrap end-of-rollout value in GAE.
+        """
         self.buffer.clear()
         obs, _ = self.env.reset()
         raw_reward_sum = 0.0
 
         for _ in range(self.cfg.n_steps):
             action, log_prob, value = self.agent.act(obs)
-
             next_obs, reward, terminated, truncated, info = self.env.step(action)
             done = terminated or truncated
+
+            # For timeout episodes (truncated but not terminated): bootstrap V(s_{t+1})
+            # so GAE correctly sees there IS future value after the episode boundary.
+            bootstrap_val = 0.0
+            if truncated and not terminated:
+                with torch.no_grad():
+                    next_t = torch.as_tensor(
+                        next_obs, dtype=torch.float32, device=self.agent.device,
+                    ).unsqueeze(0)
+                    feat = self.agent.network.backbone(next_t)
+                    bootstrap_val = float(self.agent.network.value(feat).item())
 
             norm_reward = self._reward_norm.normalize(reward, done)
 
@@ -266,6 +298,9 @@ class PPOTrainer:
             self.buffer.rewards.append(norm_reward)
             self.buffer.values.append(value)
             self.buffer.dones.append(done)
+            self.buffer.terminateds.append(terminated)
+            self.buffer.truncateds.append(truncated and not terminated)
+            self.buffer.bootstrap_values.append(bootstrap_val)
 
             raw_reward_sum += reward
             obs = next_obs
@@ -273,11 +308,11 @@ class PPOTrainer:
             if done:
                 obs, _ = self.env.reset()
 
-        return raw_reward_sum
+        return raw_reward_sum, obs
 
-    def _update(self) -> dict:
+    def _update(self, last_obs: np.ndarray) -> dict:
         """Run PPO update epochs on the collected rollout."""
-        advantages, returns = self._compute_gae()
+        advantages, returns = self._compute_gae(last_obs)
 
         obs_arr = np.array(self.buffer.observations)
         old_log_probs = np.array(self.buffer.log_probs)
@@ -367,21 +402,58 @@ class PPOTrainer:
             result["approx_kl"] = approx_kl  # type: ignore[possibly-undefined]
         return result
 
-    def _compute_gae(self) -> tuple[np.ndarray, np.ndarray]:
-        """Generalized Advantage Estimation."""
+    def _compute_gae(self, last_obs: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Generalized Advantage Estimation with correct truncation bootstrap.
+
+        Distinguishes two kinds of episode endings:
+        - terminated: genuine game-over (death, margin call, -30% loss).
+          Future value = 0.  GAE mask = 0.
+        - truncated: timeout (max_episode_bars reached).
+          Future value exists — bootstrap V(s_{t+1}).  GAE mask = 1 for delta,
+          carry resets to 0 (new episode starts).
+
+        Also bootstraps the *end-of-rollout* value from last_obs so that the
+        final n_steps bar doesn't always see next_val=0.
+        """
         rewards = np.array(self.buffer.rewards)
         values = np.array(self.buffer.values)
         dones = np.array(self.buffer.dones, dtype=np.float32)
+        terminateds = np.array(self.buffer.terminateds, dtype=np.float32)
+        truncateds = np.array(self.buffer.truncateds, dtype=bool)
+        bootstrap_values = np.array(self.buffer.bootstrap_values, dtype=np.float32)
+
+        # Bootstrap value for the observation right after the rollout window ends
+        with torch.no_grad():
+            last_t = torch.as_tensor(
+                last_obs, dtype=torch.float32, device=self.agent.device,
+            ).unsqueeze(0)
+            feat = self.agent.network.backbone(last_t)
+            last_value = float(self.agent.network.value(feat).item())
 
         n = len(rewards)
         advantages = np.zeros(n)
         last_gae = 0.0
 
         for t in reversed(range(n)):
-            next_val = values[t + 1] if t + 1 < n else 0.0
-            next_non_terminal = 1.0 - dones[t]
+            # next_val: value of the state one step ahead
+            if t + 1 < n:
+                next_val = values[t + 1]
+            else:
+                next_val = last_value  # end-of-rollout bootstrap
+
+            # Timeout episode: replace next_val with the pre-computed bootstrap
+            if truncateds[t]:
+                next_val = bootstrap_values[t]
+
+            # Temporal-difference delta:
+            #   - mask = 0 only on genuine termination (next value is truly 0)
+            #   - mask = 1 for truncation (future exists, we just ended the episode early)
+            next_non_terminal = 1.0 - terminateds[t]
             delta = rewards[t] + self.cfg.gamma * next_val * next_non_terminal - values[t]
-            last_gae = delta + self.cfg.gamma * self.cfg.gae_lambda * next_non_terminal * last_gae
+
+            # GAE carry-over: reset whenever an episode ends (terminated OR truncated)
+            carry_mask = 1.0 - dones[t]
+            last_gae = delta + self.cfg.gamma * self.cfg.gae_lambda * carry_mask * last_gae
             advantages[t] = last_gae
 
         returns = advantages + values
