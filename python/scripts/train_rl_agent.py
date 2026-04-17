@@ -50,8 +50,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--n-steps", type=int, default=512, help="PPO rollout length")
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--max-episode", type=int, default=2000, help="Max episode bars")
-    p.add_argument("--lookback", type=int, default=1,
-                    help="Bars of history in the observation sequence (1 = legacy flat)")
+    p.add_argument("--lookback", type=int, default=10,
+                    help="Bars of history in the observation sequence (10 = transformer sequence mode)")
+    p.add_argument("--no-regime", action="store_true",
+                    help="Disable regime context features (regime_dim=0)")
     p.add_argument("--patience", type=int, default=10,
                     help="Early-stop after this many evals without best_eval improvement")
     p.add_argument("--n-epochs", type=int, default=8,
@@ -151,7 +153,7 @@ async def load_data(
 
     for symbol in symbols:
         data: dict[str, pd.DataFrame] = {}
-        for tf in ("1m", "1h", "4h"):
+        for tf in ("1m", "1h", "4h", "1d"):
             t0 = time.monotonic()
             where = "symbol = :sym AND timeframe = :tf"
             params: dict = {"sym": symbol, "tf": tf}
@@ -233,7 +235,15 @@ def train(
     log.info("train_simulator", cost_profile=args.cost_profile, **sim_config_to_meta(sim_config))
 
     first_sym = list(datasets.keys())[0]
-    first_data = datasets[first_sym]
+    first_data_full = datasets[first_sym]
+
+    # 1d is loaded for regime computation only — exclude from env timeframes
+    _ENV_TFS = ("1m", "1h", "4h")
+    env_datasets = {
+        sym: {tf: df for tf, df in tf_map.items() if tf in _ENV_TFS}
+        for sym, tf_map in datasets.items()
+    }
+    first_data = {tf: df for tf, df in first_data_full.items() if tf in _ENV_TFS}
 
     sample_tf = list(first_data.keys())[0]
     sample_feats = compute_features(first_data[sample_tf].head(50), FeatureConfig(), prefix="x_")
@@ -248,21 +258,49 @@ def train(
         covered = [s for s in datasets if s in funding_rates]
         log.info("microstructure_enabled", dim=micro_dim,
                  symbols_with_fr=covered, total_symbols=len(datasets))
+
+    # regime context features (regime_code + vol_code) — pre-computed before env creation
+    regime_dim = 0
+    regime_features: dict | None = None
+    if not getattr(args, "no_regime", False):
+        from smart_trader.env.regime_features import compute_regime_features
+        regime_features = {}
+        regime_dim = 2
+        log.info("computing_regime_features", symbols=list(datasets.keys()))
+        for sym, tf_map in datasets.items():
+            daily_df   = tf_map.get("1d", pd.DataFrame())
+            hourly_df  = tf_map.get("1h", pd.DataFrame())
+            env_tf_map = env_datasets[sym]
+            primary_tf_tmp = "1m" if "1m" in env_tf_map else list(env_tf_map.keys())[0]
+            primary_df = env_tf_map[primary_tf_tmp]
+            if hourly_df.empty and (daily_df.empty or len(daily_df) < 60):
+                log.warning("regime_features: insufficient data for %s — disabling", sym)
+                regime_dim = 0
+                regime_features = None
+                break
+            regime_features[sym] = compute_regime_features(
+                daily_df, hourly_df, primary_df, sym, stride=1,
+            )
+        if regime_features:
+            log.info("regime_features_ready", symbols=list(regime_features.keys()),
+                     regime_dim=regime_dim)
+
     space_cfg = SpaceConfig(
         n_timeframes=n_tf,
         features_per_tf=actual_features_per_tf,
         lookback=args.lookback,
         microstructure_dim=micro_dim,
+        regime_dim=regime_dim,
     )
 
     primary_tf = "1m" if "1m" in first_data else list(first_data.keys())[0]
-    min_bars = min(len(d[primary_tf]) for d in datasets.values() if primary_tf in d)
+    min_bars = min(len(d[primary_tf]) for d in env_datasets.values() if primary_tf in d)
     max_episode = min(args.max_episode, min_bars // 2)
     log.info("episode_config", symbols=list(datasets.keys()), primary_tf=primary_tf,
              min_bars=min_bars, max_episode=max_episode)
 
     env_config = MarketEnvConfig(
-        datasets=datasets,
+        datasets=env_datasets,
         primary_tf=primary_tf,
         max_episode_bars=max_episode,
         initial_cash=10_000.0,
@@ -276,6 +314,7 @@ def train(
         sim_config=sim_config,
         seed=args.seed,
         funding_rates=funding_rates or None,
+        regime_features=regime_features,
     )
 
     env = MarketEnv(env_config)
@@ -343,7 +382,7 @@ def train(
     print(f"{'═'*60}")
     print(f"  symbols:    {sym_str}")
     print(f"  obs_dim:    {obs_dim}")
-    print(f"  lookback:   {args.lookback}")
+    print(f"  lookback:   {args.lookback}  regime_dim:{regime_dim}")
     print(f"  d_model:    {args.d_model}")
     print(f"  params:     {param_count:,}")
     print(f"  patience:   {args.patience}")

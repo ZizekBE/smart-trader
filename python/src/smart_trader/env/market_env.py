@@ -59,6 +59,10 @@ class MarketEnvConfig:
     # funding_rates: {symbol → pd.Series(rate, index=time)} from funding_rates table
     # open_interest: {symbol → pd.Series(value_usd, index=time)} — deferred until ≥6 months
     funding_rates: dict | None = None  # dict[str, pd.Series]
+    # Regime context features (optional; pre-computed by compute_regime_features()).
+    # dict[symbol → DataFrame(regime_code, vol_code)] indexed by primary-tf timestamps.
+    # When provided, SpaceConfig.regime_dim must equal 2.
+    regime_features: dict | None = None  # dict[str, pd.DataFrame]
 
 
 class MarketEnv(gym.Env):
@@ -84,6 +88,12 @@ class MarketEnv(gym.Env):
             for sym, s in self.cfg.funding_rates.items():
                 self._fr_by_sym[sym] = s.sort_index()
         self._cur_fr: pd.Series | None = None
+        # Regime feature lookup: {symbol → DataFrame(regime_code, vol_code)}
+        self._reg_by_sym: dict[str, pd.DataFrame] = {}
+        if self.cfg.regime_features:
+            for sym, df in self.cfg.regime_features.items():
+                self._reg_by_sym[sym] = df.sort_index()
+        self._cur_reg: pd.DataFrame | None = None
 
         self._select_symbol(list(self._all_features.keys())[0])
         self._reset_state()
@@ -207,7 +217,8 @@ class MarketEnv(gym.Env):
         self._features = self._all_features[sym]
         self._primary_data = self._all_primary[sym]
         self._warmup_bars = min(200, len(self._primary_data) // 4)
-        self._cur_fr = self._fr_by_sym.get(sym)
+        self._cur_fr  = self._fr_by_sym.get(sym)
+        self._cur_reg = self._reg_by_sym.get(sym)
 
     def _get_bar(self, idx: int) -> dict:
         row = self._primary_data.iloc[idx]
@@ -305,7 +316,20 @@ class MarketEnv(gym.Env):
             np.cos(2 * np.pi * dow / 7),
         ], dtype=np.float32)
 
-        context = np.concatenate([portfolio, micro, time_emb])
+        # regime context (regime_code, vol_code) — pre-computed by compute_regime_features()
+        if sc.regime_dim > 0 and self._cur_reg is not None and self._step < len(self._primary_data):
+            ts = self._primary_data.index[self._step]
+            try:
+                row = self._cur_reg.asof(ts) if hasattr(self._cur_reg, "asof") else self._cur_reg.iloc[
+                    self._cur_reg.index.get_indexer([ts], method="ffill")[0]
+                ]
+                reg_vec = np.array(row.values[:sc.regime_dim], dtype=np.float32)
+            except Exception:
+                reg_vec = np.full(sc.regime_dim, 0.5, dtype=np.float32)
+        else:
+            reg_vec = np.zeros(sc.regime_dim, dtype=np.float32)
+
+        context = np.concatenate([portfolio, micro, time_emb, reg_vec])
 
         obs = np.concatenate([market, context])
         expected = self.observation_space.shape[0]

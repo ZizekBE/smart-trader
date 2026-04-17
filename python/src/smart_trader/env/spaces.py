@@ -18,8 +18,9 @@ class SpaceConfig:
     n_timeframes: int = 4        # e.g. 1m, 5m, 1h, 4h
     features_per_tf: int = 30   # indicators per timeframe
     portfolio_dim: int = 6       # position, pnl, margin, cash, leverage, dd
-    microstructure_dim: int = 0  # reserved; set >0 when real microstructure data is available
+    microstructure_dim: int = 0  # set >0 when real microstructure data is available
     time_dim: int = 4            # hour_sin, hour_cos, dow_sin, dow_cos
+    regime_dim: int = 0          # regime context: set to 2 for (regime_code, vol_code)
     lookback: int = 1            # bars of history in the observation sequence
 
     @property
@@ -29,8 +30,8 @@ class SpaceConfig:
 
     @property
     def context_dim(self) -> int:
-        """Portfolio + microstructure + time embedding dimension."""
-        return self.portfolio_dim + self.microstructure_dim + self.time_dim
+        """Portfolio + microstructure + time embedding + regime context."""
+        return self.portfolio_dim + self.microstructure_dim + self.time_dim + self.regime_dim
 
 
 def build_observation_space(cfg: SpaceConfig | None = None) -> spaces.Box:
