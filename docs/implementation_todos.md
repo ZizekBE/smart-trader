@@ -69,8 +69,8 @@ EPIC-OOS (评估协议) ──► EPIC-RL (RL 硬化) ──► EPIC-RL-OPT (Bug
 
 | 状态 | Task |
 |------|------|
-| [ ] | **T-RL-01-1**：按 `docs/rl_train_sim_alignment.md` 执行：train（`--cost-profile conservative`）→ `eval_walkforward`（同 profile）→ `wf_conservative_gate`。 |
-| [ ] | **T-RL-01-2**：将本次 run 的 CLI、输出 JSON 路径、gate 终端输出保存到同一目录或 run 笔记。 |
+| [x] | **T-RL-01-1**：按 `docs/rl_train_sim_alignment.md` 执行：train（`--cost-profile conservative`）→ `eval_walkforward`（同 profile）→ `wf_conservative_gate`。<br>**已执行（2026-04-16/17）**：r1（46k steps，Sharpe N/A）、r2（94k steps，WF Mean Sharpe -1.15）均完成全链；r3 训练中。 |
+| [x] | **T-RL-01-2**：将本次 run 的 CLI、输出 JSON 路径、gate 终端输出保存到同一目录或 run 笔记。<br>**已归档**：`docs/training_runs/v9_conservative_run_20260416.md`（r1/r2）、`v9_conservative_r3_20260417.md`（r3）；eval JSON 在 `checkpoints/v9_conservative_r2/best_agent.eval.json`。 |
 
 ### Story: Checkpoint 与部署约定（`ST-RL-02`）
 
@@ -123,7 +123,7 @@ EPIC-OOS (评估协议) ──► EPIC-RL (RL 硬化) ──► EPIC-RL-OPT (Bug
 
 | 优先级 | 状态 | Task |
 |--------|------|------|
-| P0 | [x] | **T-OPT-02-1** `train_rl_agent.py:266` — `eval_episodes=5` 太少，金融时序不同起点方差极大：改为 15，并作为 CLI 参数 `--eval-episodes` 暴露（若算力受限可分阶段：先 10，稳定后 15）。 |
+| P0 | [x] | **T-OPT-02-1** `train_rl_agent.py:266` — `eval_episodes=5` 太少，金融时序不同起点方差极大：改为 15，并作为 CLI 参数 `--eval-episodes` 暴露（若算力受限可分阶段：先 10，稳定后 15）。**r3 起升至 30**（WF 诊断：15 eps 下早停信号噪声仍高）。 |
 | P2 | [ ] | **T-OPT-02-2**（可选）早停判据改为 eval_reward 的 **滑动均值**（窗口 3）而非单次值，进一步平滑噪声；patience 计数逻辑不变。 |
 
 **验收**：`eval_episodes=15` 下，同一 checkpoint 的多次 eval 标准差应明显低于 `eval_episodes=5` 的水平（可用短训跑 10 次 eval 对比标准差验证）。
@@ -155,6 +155,24 @@ EPIC-OOS (评估协议) ──► EPIC-RL (RL 硬化) ──► EPIC-RL-OPT (Bug
 | P2 | [x] | **T-OPT-04-3** 对齐 `SpaceConfig.microstructure_dim`、`MarketEnvConfig`、`MetaController(context_dim=…)` 三处配置，确保 obs_dim 自动推导不需手动改多处；增加 `assert obs.shape == observation_space.shape` 的 CI 检查。<br>**已完成（2026-04-16）**：FR backfill 修复后（migration 007 + symbol 归一化 + upsert 改 `index_elements`），FR 覆盖率 100%（4700 行/symbol，2022-2026）。`microstructure_dim=1`（FR only）已集成：`train_rl_agent.py` 自动加载 funding_rates 并传入 `MarketEnvConfig.funding_rates`；`MarketEnv._get_observation()` 用 `pd.Series.asof(ts)` 查最近 FR；`obs_dim` 自动从 70 → 71。OI 30 天覆盖率 100% 但历史跨度 < 2%（不足以覆盖随机采样的 4 年训练集），暂缓至积累 ≥ 6 个月后再接入。烟雾验证（2000 steps, ETH/USDT, conservative）通过，无异常。 |
 
 **验收**：T-OPT-04-1 完成后，训练曲线的 value_loss 方差应降低；T-OPT-04-2 需先做数据覆盖率报告再决定是否上线。
+
+---
+
+### Story: Reward Shaping — 回撤惩罚强化（`ST-OPT-05`）
+
+**I want** 奖励函数直接惩罚高 max_dd **so that** policy 学会主动止损，WF Mean Sharpe 转正。
+
+**根因（r2 WF 分析，2026-04-17）**：旧 `beta=0.5`、`dd_threshold=5%` 下 per-step dd 惩罚太弱；终止时无回撤汇总惩罚；policy 在 -37% 最差折中未切防守姿态。
+
+| 优先级 | 状态 | Task |
+|--------|------|------|
+| P0 | [x] | **T-OPT-05-1** `env/reward.py` — `beta` 默认 0.5→**2.0**；`dd_threshold` 0.05→**0.02**；新增 `dd_terminal_weight` 字段（默认 0.0，r3 设为 1.5）；新增 `terminal_dd_reward()` 方法：`-(dd_terminal_weight × max_dd × pnl_scale)`，不受 clip_reward 限制。 |
+| P0 | [x] | **T-OPT-05-2** `env/market_env.py` — episode 结束（`terminated or truncated`）时调用 `terminal_dd_reward()` 并加到最终 step reward。 |
+| P0 | [x] | **T-OPT-05-3** `scripts/train_rl_agent.py` — 暴露 `--dd-weight`、`--dd-threshold`、`--dd-terminal` CLI 参数；写入 checkpoint `config` meta。 |
+| P0 | [x] | **T-OPT-05-4** `scripts/eval_walkforward.py` — 修复 `microstructure_dim` 自动检测：从 checkpoint `saved_obs` 推导（`saved_obs - base_obs = micro_dim`），自动加载 FR，不再 obs_dim mismatch。 |
+| P1 | [x] | **T-OPT-05-5** 验收：r3–r5 超参数搜索完成。r3（-5.38 Sharpe，20% win）过度惩罚；r4（-1.51 Sharpe，50% win，MaxDD 1.89%，最差折 -3.00%）为 v9 最优；r5（trade_penalty=0.04）未降低频率且劣于 r4。**根本原因**：`lookback=1` + 63K 参数在 conservative 摩擦下无法产生稳定正 alpha；v9 超参数搜索终止，r4 为 v9 最终基线。 |
+
+**r3 配置（2026-04-17）**：`dd_weight=2.0, dd_threshold=0.02, dd_terminal=1.5, trade_penalty=0.05, n_epochs=4, eval_episodes=30`。日志：`docs/training_runs/v9_conservative_r3_20260417.log`。
 
 ---
 
@@ -195,30 +213,52 @@ EPIC-OOS (评估协议) ──► EPIC-RL (RL 硬化) ──► EPIC-RL-OPT (Bug
 
 ## Epic: ML 信号过滤 Phase 1.1（`EPIC-ML`）
 
-**并行**：可与 `EPIC-RL` 并行，视人力。
+**状态**：🟡 已启动（2026-04-17）
 
-**目标**：规则候选信号后经 ML 过滤，WF 标签无泄漏，未过门槛不接入主循环。
+**背景**：v9 RL 超参数搜索（r1–r5）证明 `lookback=1` + 63K 参数在 conservative 摩擦下无法通过 shadow 门禁；转换为 Phase 1.1 — LightGBM 后置过滤器，对规则引擎输出的候选信号进行二分类（是否盈利），目标将 WF Win Rate 从当前规则引擎水平提升至 ≥ 55%。
 
-### Story: 标注与特征契约（`ST-ML-01`）
+**数据流**：
+```
+历史蜡烛 DB → 信号回放器 → SignalEvent（含 features 字典）→ 前向收益标注 → LightGBM 训练
+规则引擎 → 候选信号 → LightGBM.predict_proba → 过滤 → 最终信号
+```
+
+**特征集**（来自 `SignalEvent.features`）：vote_count, vote_boost, vwap, vwap_factor, vol_ratio, vol_factor + 各 detector 专属特征（rsi, macd_pct, macd_signal_pct, macd_hist_pct, bb_width, bb_pct, atr_pct, adx, di_plus, di_minus, obv_slope_norm, vwap_dist, price_slope_pct, ret_1, ret_5, ema_9/21/50/200_dist）以及 `regime`（one-hot）、`confidence`、`raw_score`、`source`（one-hot）。
+
+**标签方案**：T+20（1h bars）后 close-to-close 净收益 > 0 → label=1（profitable）。净收益 = direction × (close_{T+20} / close_T - 1) - 2 × fee_rate（fee_rate=0.0004，conservative 单边）。
+
+**门禁**：OOS AUC ≥ 0.55 **且** WF Precision@top_decile ≥ 0.60 **且** 过滤后 WF Mean Sharpe > 无过滤器基线。任一未达标 → 文档记录，不接入主循环。
+
+---
+
+### Story: 信号回放与标签数据集（`ST-ML-01`）
 
 | 状态 | Task |
 |------|------|
-| [ ] | **T-ML-01-1**：定义 walk-forward 标签：未来 N 根、无 lookahead；与 `SignalEngine` 输出字段对齐文档。 |
-| [ ] | **T-ML-01-2**：特征列表与来源表（与现有特征引擎关系写清）。 |
+| [x] | **T-ML-01-1** `scripts/collect_signal_labels.py`：历史蜡烛回放器。加载 DB 中 binance 1h+1d 蜡烛，滚动窗口按时间顺序运行 `TrendEngine`（日线上下文，每日缓存）+ `SignalEngine`（1h，500 bars 滚动），对每个 `SignalEvent` 记录 features 字典 + timestamp + signal_type + 前向 T+N bars 净收益 + 二值标签，输出 Parquet。**CLI**：`uv run python scripts/collect_signal_labels.py --symbols ETH/USDT BTC/USDT --exchange binance --label-horizon 20 --output data/signal_labels/labels.parquet`。 |
+| [x] | **T-ML-01-2** 运行 `collect_signal_labels.py`，检查输出 Parquet：行数（目标 ≥ 2000 signals for ETH+BTC，2022-2026），标签分布（正样本率应在 40%–60%），feature 缺失率（< 5%）。将结果摘要写入 `docs/training_runs/phase1_1_signal_stats.md`。<br>**结果（2026-04-17）**：`labels_ETHUSDT_BTCUSDT_h20_20260417_0232.parquet`；ETH 8523 + BTC 8846 = **17,369 rows**，28 列；label 正样本率 **48.4%**（long 48.4%，short 48.3%）；按信号源：bollinger 50.6%，macd 51.1%（270 条，稀少），rsi 47.0%，ema_bounce 46.1%。原始价格列（close/upper/mid/ema20/low/high/lower）需在训练前剔除（非平稳）。 |
 
-### Story: 训练与验证切分（`ST-ML-02`）
+---
 
-| 状态 | Task |
-|------|------|
-| [ ] | **T-ML-02-1**：实现或约定按时间轴的 train/val 切分，禁止跨日随机打乱。 |
-| [ ] | **T-ML-02-2**：记录每次训练使用的起止时间与品种。 |
+### Story: LightGBM 训练与验证（`ST-ML-02`）
 
-### Story: 上线门槛（`ST-ML-03`）
+**切分方案**：时间轴顺序切分，禁止随机打乱。
 
 | 状态 | Task |
 |------|------|
-| [ ] | **T-ML-03-1**：定义 OOS 指标门槛（如 AUC/PR 或业务指标）+ 与「无过滤器」回测对比要求。 |
-| [ ] | **T-ML-03-2**：未过门槛则文档声明「不接入主循环」，避免静默上线。 |
+| [ ] | **T-ML-02-1** `scripts/train_signal_filter.py`：加载 Parquet，时间切分（train: 2022-01–2025-06，val: 2025-07–2025-12，test: 2026-01–当前），对 regime/source 做 LabelEncoder（训练后固定 mapping），训练 LightGBM 二分类器（`objective=binary`, `num_leaves=31`, `min_child_samples=50`，5-fold time-series CV），评估 AUC、PR-AUC、Precision@top_decile；保存 `models/signal_filter/lgb_v1.model` + feature importance CSV。 |
+| [ ] | **T-ML-02-2** 记录训练参数、数据起止时间、OOS 指标到 `docs/training_runs/phase1_1_lgb_v1.md`；若 OOS AUC < 0.55，分析 feature importance 并调整特征集或标签 horizon。 |
+
+---
+
+### Story: 运行时集成与 WF 验证（`ST-ML-03`）
+
+| 状态 | Task |
+|------|------|
+| [ ] | **T-ML-03-1** `strategy/signal_filter.py`（新文件）：封装 LightGBM 为 `SignalFilter` 类，`filter(events: list[SignalEvent]) -> list[SignalEvent]`，仅保留 `predict_proba ≥ threshold`（默认 0.55）的信号；`__init__` 从路径加载模型文件。 |
+| [ ] | **T-ML-03-2** `strategy/signal_service.py` 中接入过滤器：在生成 `signal_events` 之后，若 `SignalFilter` 已配置则调用 `filter()`；通过配置（`settings.signal_filter_model`）控制开关，默认 None（不过滤），不改变无过滤器的现有行为。 |
+| [ ] | **T-ML-03-3** WF 验证：用与 RL 相同的 20 folds × 7d 协议，在规则引擎 + 过滤器模式下运行 `run_real_backtest.py` 或等价脚本；对比「无过滤器基线」与「过滤器开启」在 Mean Sharpe / Win Rate / Avg Trades 上的差异；结果写入 `docs/training_runs/phase1_1_wf_validation.md`。 |
+| [ ] | **T-ML-03-4** 门禁审查：若满足「OOS AUC ≥ 0.55 AND WF Precision@top_decile ≥ 0.60 AND WF Mean Sharpe 高于基线」，则标记为「可进入 shadow」；否则文档记录原因并暂缓接入。 |
 
 ---
 

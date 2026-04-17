@@ -62,6 +62,13 @@ def parse_args() -> argparse.Namespace:
                     help="AdamW L2 (higher = less OOS variance; default nudged for RL stability)")
     p.add_argument("--trade-penalty", type=float, default=0.02,
                     help="RewardEngine churn penalty per trade (higher = less frequent trades)")
+    p.add_argument("--dd-weight", type=float, default=2.0,
+                    help="RewardEngine per-step drawdown penalty weight (beta). Default 2.0.")
+    p.add_argument("--dd-threshold", type=float, default=0.02,
+                    help="Drawdown fraction at which per-step penalty activates. Default 0.02.")
+    p.add_argument("--dd-terminal", type=float, default=0.0,
+                    help="Terminal episode penalty weight: -(dd_terminal × max_dd × pnl_scale). "
+                         "0 = disabled. Use 1.0–2.0 for strong terminal signal.")
     p.add_argument(
         "--cost-profile",
         choices=("default", "conservative"),
@@ -260,7 +267,12 @@ def train(
         max_episode_bars=max_episode,
         initial_cash=10_000.0,
         space_config=space_cfg,
-        reward_config=RewardConfig(trade_penalty=args.trade_penalty),
+        reward_config=RewardConfig(
+            trade_penalty=args.trade_penalty,
+            beta=args.dd_weight,
+            dd_threshold=args.dd_threshold,
+            dd_terminal_weight=args.dd_terminal,
+        ),
         sim_config=sim_config,
         seed=args.seed,
         funding_rates=funding_rates or None,
@@ -337,6 +349,7 @@ def train(
     print(f"  patience:   {args.patience}")
     print(f"  weight_dec: {args.weight_decay}")
     print(f"  trade_pen:  {args.trade_penalty}")
+    print(f"  dd_weight:  {args.dd_weight}  dd_thr:{args.dd_threshold}  dd_term:{args.dd_terminal}")
     print(f"  cost_prof:  {args.cost_profile}")
     print(f"  ent_coef:   {args.entropy_coef} -> {args.entropy_coef_end}")
     print(f"  n_steps:    {args.n_steps}")
@@ -367,6 +380,9 @@ def train(
         {
             "cost_profile": args.cost_profile,
             "trade_penalty": args.trade_penalty,
+            "dd_weight": args.dd_weight,
+            "dd_threshold": args.dd_threshold,
+            "dd_terminal": args.dd_terminal,
             "train_simulator": sim_config_to_meta(sim_config),
             "weight_decay": args.weight_decay,
             "entropy_coef": args.entropy_coef,

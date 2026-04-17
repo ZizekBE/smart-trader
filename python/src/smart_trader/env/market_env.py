@@ -153,6 +153,9 @@ class MarketEnv(gym.Env):
         terminated = self._check_terminated()
         truncated = self._step >= self._max_step
 
+        if terminated or truncated:
+            reward += self._reward_engine.terminal_dd_reward()
+
         obs = self._get_observation()
         return obs, reward, terminated, truncated, self._info()
 

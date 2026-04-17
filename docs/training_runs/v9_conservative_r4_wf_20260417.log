@@ -1,0 +1,52 @@
+[1mloaded                        [0m [36mrows[0m=[35m2248669[0m [36msymbol[0m=[35mETH/USDT[0m [36mtf[0m=[35m1m[0m
+[1mloaded                        [0m [36mrows[0m=[35m37479[0m [36msymbol[0m=[35mETH/USDT[0m [36mtf[0m=[35m1h[0m
+[1mloaded                        [0m [36mrows[0m=[35m9370[0m [36msymbol[0m=[35mETH/USDT[0m [36mtf[0m=[35m4h[0m
+[1mfunding_rates_loaded          [0m [36mrows[0m=[35m4700[0m [36msymbol[0m=[35mETH/USDT[0m
+[1mcheckpoint_arch               [0m [36md_model[0m=[35m64[0m [36mlookback[0m=[35m1[0m [36mn_heads[0m=[35m4[0m [36mn_layers[0m=[35m1[0m [36mobs_dim_saved[0m=[35m71[0m [36mpath[0m=[35mcheckpoints/v9_conservative_r4/best_agent.pt[0m
+[1mmicrostructure_detected       [0m [36mfr_symbols[0m=[35m['ETH/USDT'][0m [36mmicrostructure_dim[0m=[35m1[0m [36mobs_dim[0m=[35m71[0m
+[1magent_loaded                  [0m [36mcheckpoint[0m=[35m./checkpoints/v9_conservative_r4/best_agent.pt[0m [36mobs_dim[0m=[35m71[0m [36msymbols[0m=[35m['ETH/USDT'][0m
+[1mwf_simulator                  [0m [36mcost_profile[0m=[35mconservative[0m [36mdepth_profile_usd[0m=[35m200000.0[0m [36mfill_model[0m=[35mbar_range[0m [36mfunding_enabled[0m=[35mTrue[0m [36minitial_margin_pct[0m=[35m0.01[0m [36mlatency_ms[0m=[35m10.0[0m [36mmaintenance_margin_pct[0m=[35m0.005[0m [36mmaker_fee[0m=[35m0.0004[0m [36mmax_leverage[0m=[35m10.0[0m [36mslippage_bps[0m=[35m15.0[0m [36mtaker_fee[0m=[35m0.001[0m
+
+════════════════════════════════════════════════════════════════════════════════
+  Walk-Forward Evaluation — 1 symbols × 20 folds × 7d
+  Cost profile: conservative  |  taker_fee=0.00100  maker_fee=0.00040  slippage_bps=15.0  depth_usd=200,000
+════════════════════════════════════════════════════════════════════════════════
+  Fold      Symbol            Period    Return    Sharpe     MaxDD  Trades
+  ────────────────────────────────────────────────────────────────────────
+     1    ETH/USDT     04/04 - 04/11    -2.84%    -14.19    4.05%      32
+     2    ETH/USDT     03/28 - 04/04    -0.36%     -3.31    1.31%      33
+     3    ETH/USDT     03/21 - 03/28  +  0.58%      5.59    0.92%      28
+     4    ETH/USDT     03/14 - 03/21    -1.98%    -15.83    2.43%      28
+     5    ETH/USDT     03/07 - 03/14    -3.00%    -14.86    3.69%      27
+     6    ETH/USDT     02/28 - 03/07  +  1.68%      9.74    1.17%      32
+     7    ETH/USDT     02/21 - 02/28  +  1.60%      8.06    1.42%      30
+     8    ETH/USDT     02/14 - 02/21  +  0.47%      5.58    0.64%      26
+     9    ETH/USDT     02/07 - 02/14  +  1.24%      6.28    1.79%      31
+    10    ETH/USDT     01/31 - 02/07    -0.40%     -1.21    2.85%      33
+    11    ETH/USDT     01/24 - 01/31  +  1.11%      5.87    2.43%      29
+    12    ETH/USDT     01/17 - 01/24    -2.12%    -16.42    2.50%      28
+    13    ETH/USDT     01/10 - 01/17    -0.16%     -2.11    0.94%      28
+    14    ETH/USDT     01/03 - 01/10    -1.94%    -18.93    2.05%      30
+    15    ETH/USDT     12/27 - 01/03  +  0.02%      0.23    1.12%      33
+    16    ETH/USDT     12/20 - 12/27  +  0.05%      0.72    0.78%      25
+    17    ETH/USDT     12/13 - 12/20    -1.04%     -6.00    2.78%      33
+    18    ETH/USDT     12/06 - 12/13  +  2.93%     10.60    1.17%      26
+    19    ETH/USDT     11/29 - 12/06    -1.96%     -7.55    3.26%      33
+    20    ETH/USDT     11/22 - 11/29  +  1.78%     17.53    0.58%      28
+  ────────────────────────────────────────────────────────────────────────
+
+  Overall (20 folds across 1 symbols):
+    Mean return:   -0.22%
+    Std return:    1.64%
+    Win rate:      50% (10/20)
+    Mean Sharpe:   -1.51
+    Mean MaxDD:    1.89%
+    Best fold:     +2.93%
+    Worst fold:    -3.00%
+
+  ETH/USDT (20 folds):
+    Mean return: -0.22%  Win rate: 50%  Mean MaxDD: 1.89%
+[1mresults_saved                 [0m [36mpath[0m=[35mcheckpoints/v9_conservative_r4/best_agent.eval.json[0m
+
+════════════════════════════════════════════════════════════════════════════════
+

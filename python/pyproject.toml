@@ -28,6 +28,8 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     # Optimisation (backtest / sleeve tuning)
     "optuna>=4.8.0",
+    "lightgbm>=4.6.0",
+    "scikit-learn>=1.8.0",
 ]
 
 [project.optional-dependencies]

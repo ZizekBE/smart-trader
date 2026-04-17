@@ -1,0 +1,310 @@
+[1mdata_loaded                   [0m [36melapsed[0m=[35m13.15s[0m [36mend[0m=[35m'2026-04-11 15:08:00+00:00'[0m [36mrows[0m=[35m2248669[0m [36mstart[0m=[35m'2022-01-01 00:00:00+00:00'[0m [36msymbol[0m=[35mBTC/USDT[0m [36mtimeframe[0m=[35m1m[0m
+[1mdata_loaded                   [0m [36melapsed[0m=[35m0.50s[0m [36mend[0m=[35m'2026-04-11 15:00:00+00:00'[0m [36mrows[0m=[35m37479[0m [36mstart[0m=[35m'2022-01-01 00:00:00+00:00'[0m [36msymbol[0m=[35mBTC/USDT[0m [36mtimeframe[0m=[35m1h[0m
+[1mdata_loaded                   [0m [36melapsed[0m=[35m0.14s[0m [36mend[0m=[35m'2026-04-11 12:00:00+00:00'[0m [36mrows[0m=[35m9370[0m [36mstart[0m=[35m'2022-01-01 00:00:00+00:00'[0m [36msymbol[0m=[35mBTC/USDT[0m [36mtimeframe[0m=[35m4h[0m
+[1mfunding_rates_loaded          [0m [36mend[0m=[35m'2026-04-16 08:00:00+00:00'[0m [36mrows[0m=[35m4700[0m [36mstart[0m=[35m'2022-01-01 00:00:00.006000+00:00'[0m [36msymbol[0m=[35mBTC/USDT[0m
+[1mdata_loaded                   [0m [36melapsed[0m=[35m12.06s[0m [36mend[0m=[35m'2026-04-11 15:08:00+00:00'[0m [36mrows[0m=[35m2248669[0m [36mstart[0m=[35m'2022-01-01 00:00:00+00:00'[0m [36msymbol[0m=[35mETH/USDT[0m [36mtimeframe[0m=[35m1m[0m
+[1mdata_loaded                   [0m [36melapsed[0m=[35m0.51s[0m [36mend[0m=[35m'2026-04-11 15:00:00+00:00'[0m [36mrows[0m=[35m37479[0m [36mstart[0m=[35m'2022-01-01 00:00:00+00:00'[0m [36msymbol[0m=[35mETH/USDT[0m [36mtimeframe[0m=[35m1h[0m
+[1mdata_loaded                   [0m [36melapsed[0m=[35m0.12s[0m [36mend[0m=[35m'2026-04-11 12:00:00+00:00'[0m [36mrows[0m=[35m9370[0m [36mstart[0m=[35m'2022-01-01 00:00:00+00:00'[0m [36msymbol[0m=[35mETH/USDT[0m [36mtimeframe[0m=[35m4h[0m
+[1mfunding_rates_loaded          [0m [36mend[0m=[35m'2026-04-16 08:00:00+00:00'[0m [36mrows[0m=[35m4700[0m [36mstart[0m=[35m'2022-01-01 00:00:00.006000+00:00'[0m [36msymbol[0m=[35mETH/USDT[0m
+[1mseed_set                      [0m [36mseed[0m=[35m42[0m
+[1mtrain_simulator               [0m [36mcost_profile[0m=[35mconservative[0m [36mdepth_profile_usd[0m=[35m200000.0[0m [36mfill_model[0m=[35mbar_range[0m [36mfunding_enabled[0m=[35mTrue[0m [36minitial_margin_pct[0m=[35m0.01[0m [36mlatency_ms[0m=[35m10.0[0m [36mmaintenance_margin_pct[0m=[35m0.005[0m [36mmaker_fee[0m=[35m0.0004[0m [36mmax_leverage[0m=[35m10.0[0m [36mslippage_bps[0m=[35m15.0[0m [36mtaker_fee[0m=[35m0.001[0m
+[1mfeature_dim_detected          [0m [36mcolumns[0m=[35m['x_ret_1', 'x_ret_5', 'x_ema_9_dist', 'x_ema_21_dist', 'x_ema_50_dist'][0m [36mfeatures_per_tf[0m=[35m20[0m
+[1mmicrostructure_enabled        [0m [36mdim[0m=[35m1[0m [36msymbols_with_fr[0m=[35m['BTC/USDT', 'ETH/USDT'][0m [36mtotal_symbols[0m=[35m2[0m
+[1mepisode_config                [0m [36mmax_episode[0m=[35m2000[0m [36mmin_bars[0m=[35m2248669[0m [36mprimary_tf[0m=[35m1m[0m [36msymbols[0m=[35m['BTC/USDT', 'ETH/USDT'][0m
+[1menv_created                   [0m [36maction_space[0m=[35m"Dict('hold_bars': Discrete(3), 'position': Box(-1.0, 1.0, (1,), float32), 'risk_budget': Box(0.01, 0.1, (1,), float32))"[0m [36mobs_dim[0m=[35m71[0m
+[1msanity_check_passed           [0m [36minfo_keys[0m=[35m['step', 'symbol', 'cash', 'portfolio_value', 'position_side', 'position_size', 'n_trades', 'total_return', 'sharpe', 'sortino', 'max_dd'][0m [36mreward[0m=[35m0.063005[0m
+[1magent_created                 [0m [36md_model[0m=[35m64[0m [36mdevice[0m=[35mcpu[0m [36mn_layers[0m=[35m1[0m [36mparams[0m=[35m63,432[0m
+
+════════════════════════════════════════════════════════════
+  PPO Training — 200,000 steps
+════════════════════════════════════════════════════════════
+  symbols:    BTC/USDT, ETH/USDT
+  obs_dim:    71
+  lookback:   1
+  d_model:    64
+  params:     63,432
+  patience:   20
+  weight_dec: 2e-05
+  trade_pen:  0.05
+  dd_weight:  2.0  dd_thr:0.02  dd_term:1.5
+  cost_prof:  conservative
+  ent_coef:   0.03 -> 0.005
+  n_steps:    512
+  n_epochs:   4
+  eval_eps:   30
+  batch_size: 64
+  max_episode:2000
+  seed:       42
+════════════════════════════════════════════════════════════
+
+[1mppo_update                    [0m [36mentropy[0m=[35m0.0297[0m [36mpolicy_loss[0m=[35m-0.0010[0m [36mreward[0m=[35m-169.2596[0m [36msteps[0m=[35m512[0m [36mupdate[0m=[35m1[0m [36mvalue_loss[0m=[35m66459405386560.8281[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m0.0340[0m [36mpolicy_loss[0m=[35m0.0026[0m [36mreward[0m=[35m-162.5488[0m [36msteps[0m=[35m1024[0m [36mupdate[0m=[35m2[0m [36mvalue_loss[0m=[35m204.7195[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m0.0111[0m [36mpolicy_loss[0m=[35m0.0008[0m [36mreward[0m=[35m-167.5165[0m [36msteps[0m=[35m1536[0m [36mupdate[0m=[35m3[0m [36mvalue_loss[0m=[35m279.6677[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.0081[0m [36mpolicy_loss[0m=[35m-0.0002[0m [36mreward[0m=[35m-235.8026[0m [36msteps[0m=[35m2048[0m [36mupdate[0m=[35m4[0m [36mvalue_loss[0m=[35m420.9986[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.0232[0m [36mpolicy_loss[0m=[35m0.0052[0m [36mreward[0m=[35m-157.6676[0m [36msteps[0m=[35m2560[0m [36mupdate[0m=[35m5[0m [36mvalue_loss[0m=[35m87.5195[0m
+[1meval                          [0m [36mbest[0m=[35m-inf[0m [36meval_reward[0m=[35m-0.7738[0m [36msteps[0m=[35m2560[0m [36mupdate[0m=[35m5[0m
+[1mnew_best_saved                [0m [36meval_reward[0m=[35m-0.7738[0m [36mstep[0m=[35m2560[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.0430[0m [36mpolicy_loss[0m=[35m-0.0004[0m [36mreward[0m=[35m-201.8182[0m [36msteps[0m=[35m3072[0m [36mupdate[0m=[35m6[0m [36mvalue_loss[0m=[35m178.2207[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.0699[0m [36mpolicy_loss[0m=[35m0.0033[0m [36mreward[0m=[35m-174.9744[0m [36msteps[0m=[35m3584[0m [36mupdate[0m=[35m7[0m [36mvalue_loss[0m=[35m111.7544[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.0861[0m [36mpolicy_loss[0m=[35m0.0003[0m [36mreward[0m=[35m-220.9914[0m [36msteps[0m=[35m4096[0m [36mupdate[0m=[35m8[0m [36mvalue_loss[0m=[35m140.3438[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.0961[0m [36mpolicy_loss[0m=[35m0.0067[0m [36mreward[0m=[35m-214.0283[0m [36msteps[0m=[35m4608[0m [36mupdate[0m=[35m9[0m [36mvalue_loss[0m=[35m138.1744[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.1069[0m [36mpolicy_loss[0m=[35m0.0069[0m [36mreward[0m=[35m-212.6606[0m [36msteps[0m=[35m5120[0m [36mupdate[0m=[35m10[0m [36mvalue_loss[0m=[35m147.2284[0m
+[1meval                          [0m [36mbest[0m=[35m-0.7738[0m [36meval_reward[0m=[35m-0.5896[0m [36msteps[0m=[35m5120[0m [36mupdate[0m=[35m10[0m
+[1mnew_best_saved                [0m [36meval_reward[0m=[35m-0.5896[0m [36mstep[0m=[35m5120[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.1123[0m [36mpolicy_loss[0m=[35m0.0059[0m [36mreward[0m=[35m-193.5112[0m [36msteps[0m=[35m5632[0m [36mupdate[0m=[35m11[0m [36mvalue_loss[0m=[35m96.6514[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.1159[0m [36mpolicy_loss[0m=[35m0.0038[0m [36mreward[0m=[35m-250.3874[0m [36msteps[0m=[35m6144[0m [36mupdate[0m=[35m12[0m [36mvalue_loss[0m=[35m159.1683[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.1098[0m [36mpolicy_loss[0m=[35m0.0038[0m [36mreward[0m=[35m-183.2129[0m [36msteps[0m=[35m6656[0m [36mupdate[0m=[35m13[0m [36mvalue_loss[0m=[35m88.4397[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.1112[0m [36mpolicy_loss[0m=[35m0.0085[0m [36mreward[0m=[35m-191.0995[0m [36msteps[0m=[35m7168[0m [36mupdate[0m=[35m14[0m [36mvalue_loss[0m=[35m119.5966[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.1285[0m [36mpolicy_loss[0m=[35m-0.0033[0m [36mreward[0m=[35m-270.3503[0m [36msteps[0m=[35m7680[0m [36mupdate[0m=[35m15[0m [36mvalue_loss[0m=[35m173.5446[0m
+[1meval                          [0m [36mbest[0m=[35m-0.5896[0m [36meval_reward[0m=[35m-0.5154[0m [36msteps[0m=[35m7680[0m [36mupdate[0m=[35m15[0m
+[1mnew_best_saved                [0m [36meval_reward[0m=[35m-0.5154[0m [36mstep[0m=[35m7680[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.1396[0m [36mpolicy_loss[0m=[35m0.0048[0m [36mreward[0m=[35m-171.2767[0m [36msteps[0m=[35m8192[0m [36mupdate[0m=[35m16[0m [36mvalue_loss[0m=[35m62.6113[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.1526[0m [36mpolicy_loss[0m=[35m0.0055[0m [36mreward[0m=[35m-164.4432[0m [36msteps[0m=[35m8704[0m [36mupdate[0m=[35m17[0m [36mvalue_loss[0m=[35m65.2010[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.1728[0m [36mpolicy_loss[0m=[35m-0.0039[0m [36mreward[0m=[35m-216.6001[0m [36msteps[0m=[35m9216[0m [36mupdate[0m=[35m18[0m [36mvalue_loss[0m=[35m100.3126[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.1811[0m [36mpolicy_loss[0m=[35m0.0132[0m [36mreward[0m=[35m-176.3468[0m [36msteps[0m=[35m9728[0m [36mupdate[0m=[35m19[0m [36mvalue_loss[0m=[35m55.9007[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.1987[0m [36mpolicy_loss[0m=[35m0.0047[0m [36mreward[0m=[35m-239.2335[0m [36msteps[0m=[35m10240[0m [36mupdate[0m=[35m20[0m [36mvalue_loss[0m=[35m109.4695[0m
+[1meval                          [0m [36mbest[0m=[35m-0.5154[0m [36meval_reward[0m=[35m-1.2249[0m [36msteps[0m=[35m10240[0m [36mupdate[0m=[35m20[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.2139[0m [36mpolicy_loss[0m=[35m0.0009[0m [36mreward[0m=[35m-241.2872[0m [36msteps[0m=[35m10752[0m [36mupdate[0m=[35m21[0m [36mvalue_loss[0m=[35m97.9226[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.2207[0m [36mpolicy_loss[0m=[35m0.0035[0m [36mreward[0m=[35m-244.8158[0m [36msteps[0m=[35m11264[0m [36mupdate[0m=[35m22[0m [36mvalue_loss[0m=[35m95.4179[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.2235[0m [36mpolicy_loss[0m=[35m0.0126[0m [36mreward[0m=[35m-222.4749[0m [36msteps[0m=[35m11776[0m [36mupdate[0m=[35m23[0m [36mvalue_loss[0m=[35m81.1731[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.2352[0m [36mpolicy_loss[0m=[35m0.0008[0m [36mreward[0m=[35m-222.0567[0m [36msteps[0m=[35m12288[0m [36mupdate[0m=[35m24[0m [36mvalue_loss[0m=[35m75.2596[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.2575[0m [36mpolicy_loss[0m=[35m-0.0048[0m [36mreward[0m=[35m-239.1197[0m [36msteps[0m=[35m12800[0m [36mupdate[0m=[35m25[0m [36mvalue_loss[0m=[35m96.7505[0m
+[1meval                          [0m [36mbest[0m=[35m-0.5154[0m [36meval_reward[0m=[35m-1.7361[0m [36msteps[0m=[35m12800[0m [36mupdate[0m=[35m25[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.2679[0m [36mpolicy_loss[0m=[35m0.0022[0m [36mreward[0m=[35m-180.6160[0m [36msteps[0m=[35m13312[0m [36mupdate[0m=[35m26[0m [36mvalue_loss[0m=[35m48.9643[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.2997[0m [36mpolicy_loss[0m=[35m-0.0012[0m [36mreward[0m=[35m-191.9444[0m [36msteps[0m=[35m13824[0m [36mupdate[0m=[35m27[0m [36mvalue_loss[0m=[35m50.7139[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.3122[0m [36mpolicy_loss[0m=[35m0.0016[0m [36mreward[0m=[35m-217.7392[0m [36msteps[0m=[35m14336[0m [36mupdate[0m=[35m28[0m [36mvalue_loss[0m=[35m59.5261[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.3432[0m [36mpolicy_loss[0m=[35m0.0091[0m [36mreward[0m=[35m-236.3664[0m [36msteps[0m=[35m14848[0m [36mupdate[0m=[35m29[0m [36mvalue_loss[0m=[35m97.5689[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.3520[0m [36mpolicy_loss[0m=[35m0.0152[0m [36mreward[0m=[35m-263.8383[0m [36msteps[0m=[35m15360[0m [36mupdate[0m=[35m30[0m [36mvalue_loss[0m=[35m86.5323[0m
+[1meval                          [0m [36mbest[0m=[35m-0.5154[0m [36meval_reward[0m=[35m-2.0886[0m [36msteps[0m=[35m15360[0m [36mupdate[0m=[35m30[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.3557[0m [36mpolicy_loss[0m=[35m0.0035[0m [36mreward[0m=[35m-277.9443[0m [36msteps[0m=[35m15872[0m [36mupdate[0m=[35m31[0m [36mvalue_loss[0m=[35m81.7437[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.3695[0m [36mpolicy_loss[0m=[35m0.0078[0m [36mreward[0m=[35m-182.4792[0m [36msteps[0m=[35m16384[0m [36mupdate[0m=[35m32[0m [36mvalue_loss[0m=[35m41.9197[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.3841[0m [36mpolicy_loss[0m=[35m0.0089[0m [36mreward[0m=[35m-243.0642[0m [36msteps[0m=[35m16896[0m [36mupdate[0m=[35m33[0m [36mvalue_loss[0m=[35m107.8117[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4070[0m [36mpolicy_loss[0m=[35m0.0023[0m [36mreward[0m=[35m-273.3703[0m [36msteps[0m=[35m17408[0m [36mupdate[0m=[35m34[0m [36mvalue_loss[0m=[35m73.4775[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4060[0m [36mpolicy_loss[0m=[35m0.0116[0m [36mreward[0m=[35m-355.2197[0m [36msteps[0m=[35m17920[0m [36mupdate[0m=[35m35[0m [36mvalue_loss[0m=[35m159.4180[0m
+[1meval                          [0m [36mbest[0m=[35m-0.5154[0m [36meval_reward[0m=[35m-1.2832[0m [36msteps[0m=[35m17920[0m [36mupdate[0m=[35m35[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4111[0m [36mpolicy_loss[0m=[35m0.0082[0m [36mreward[0m=[35m-193.7038[0m [36msteps[0m=[35m18432[0m [36mupdate[0m=[35m36[0m [36mvalue_loss[0m=[35m40.2518[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4337[0m [36mpolicy_loss[0m=[35m0.0075[0m [36mreward[0m=[35m-198.5003[0m [36msteps[0m=[35m18944[0m [36mupdate[0m=[35m37[0m [36mvalue_loss[0m=[35m38.4125[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4424[0m [36mpolicy_loss[0m=[35m0.0110[0m [36mreward[0m=[35m-212.8915[0m [36msteps[0m=[35m19456[0m [36mupdate[0m=[35m38[0m [36mvalue_loss[0m=[35m55.5313[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4585[0m [36mpolicy_loss[0m=[35m0.0120[0m [36mreward[0m=[35m-181.3445[0m [36msteps[0m=[35m19968[0m [36mupdate[0m=[35m39[0m [36mvalue_loss[0m=[35m43.7686[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4684[0m [36mpolicy_loss[0m=[35m0.0005[0m [36mreward[0m=[35m-181.0505[0m [36msteps[0m=[35m20480[0m [36mupdate[0m=[35m40[0m [36mvalue_loss[0m=[35m46.0502[0m
+[1meval                          [0m [36mbest[0m=[35m-0.5154[0m [36meval_reward[0m=[35m-2.4515[0m [36msteps[0m=[35m20480[0m [36mupdate[0m=[35m40[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4683[0m [36mpolicy_loss[0m=[35m0.0100[0m [36mreward[0m=[35m-198.0930[0m [36msteps[0m=[35m20992[0m [36mupdate[0m=[35m41[0m [36mvalue_loss[0m=[35m33.0955[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4841[0m [36mpolicy_loss[0m=[35m0.0086[0m [36mreward[0m=[35m-250.7276[0m [36msteps[0m=[35m21504[0m [36mupdate[0m=[35m42[0m [36mvalue_loss[0m=[35m55.1788[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4764[0m [36mpolicy_loss[0m=[35m0.0065[0m [36mreward[0m=[35m-206.0594[0m [36msteps[0m=[35m22016[0m [36mupdate[0m=[35m43[0m [36mvalue_loss[0m=[35m41.3000[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5085[0m [36mpolicy_loss[0m=[35m0.0172[0m [36mreward[0m=[35m-242.3190[0m [36msteps[0m=[35m22528[0m [36mupdate[0m=[35m44[0m [36mvalue_loss[0m=[35m65.1341[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4976[0m [36mpolicy_loss[0m=[35m0.0083[0m [36mreward[0m=[35m-234.9338[0m [36msteps[0m=[35m23040[0m [36mupdate[0m=[35m45[0m [36mvalue_loss[0m=[35m95.4432[0m
+[1meval                          [0m [36mbest[0m=[35m-0.5154[0m [36meval_reward[0m=[35m-3.1320[0m [36msteps[0m=[35m23040[0m [36mupdate[0m=[35m45[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5010[0m [36mpolicy_loss[0m=[35m0.0156[0m [36mreward[0m=[35m-269.8227[0m [36msteps[0m=[35m23552[0m [36mupdate[0m=[35m46[0m [36mvalue_loss[0m=[35m64.3978[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5210[0m [36mpolicy_loss[0m=[35m0.0137[0m [36mreward[0m=[35m-295.1337[0m [36msteps[0m=[35m24064[0m [36mupdate[0m=[35m47[0m [36mvalue_loss[0m=[35m78.1395[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5209[0m [36mpolicy_loss[0m=[35m0.0034[0m [36mreward[0m=[35m-271.3936[0m [36msteps[0m=[35m24576[0m [36mupdate[0m=[35m48[0m [36mvalue_loss[0m=[35m76.1266[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5422[0m [36mpolicy_loss[0m=[35m0.0166[0m [36mreward[0m=[35m-258.4074[0m [36msteps[0m=[35m25088[0m [36mupdate[0m=[35m49[0m [36mvalue_loss[0m=[35m63.6179[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5674[0m [36mpolicy_loss[0m=[35m0.0188[0m [36mreward[0m=[35m-186.6973[0m [36msteps[0m=[35m25600[0m [36mupdate[0m=[35m50[0m [36mvalue_loss[0m=[35m33.3779[0m
+[1meval                          [0m [36mbest[0m=[35m-0.5154[0m [36meval_reward[0m=[35m-3.2113[0m [36msteps[0m=[35m25600[0m [36mupdate[0m=[35m50[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5710[0m [36mpolicy_loss[0m=[35m0.0062[0m [36mreward[0m=[35m-254.6543[0m [36msteps[0m=[35m26112[0m [36mupdate[0m=[35m51[0m [36mvalue_loss[0m=[35m72.7625[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5670[0m [36mpolicy_loss[0m=[35m0.0093[0m [36mreward[0m=[35m-292.8136[0m [36msteps[0m=[35m26624[0m [36mupdate[0m=[35m52[0m [36mvalue_loss[0m=[35m85.2438[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5687[0m [36mpolicy_loss[0m=[35m0.0250[0m [36mreward[0m=[35m-272.2498[0m [36msteps[0m=[35m27136[0m [36mupdate[0m=[35m53[0m [36mvalue_loss[0m=[35m55.7063[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5642[0m [36mpolicy_loss[0m=[35m0.0101[0m [36mreward[0m=[35m-216.3094[0m [36msteps[0m=[35m27648[0m [36mupdate[0m=[35m54[0m [36mvalue_loss[0m=[35m45.9892[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5706[0m [36mpolicy_loss[0m=[35m0.0081[0m [36mreward[0m=[35m-250.1606[0m [36msteps[0m=[35m28160[0m [36mupdate[0m=[35m55[0m [36mvalue_loss[0m=[35m73.5331[0m
+[1meval                          [0m [36mbest[0m=[35m-0.5154[0m [36meval_reward[0m=[35m-3.0328[0m [36msteps[0m=[35m28160[0m [36mupdate[0m=[35m55[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5657[0m [36mpolicy_loss[0m=[35m0.0032[0m [36mreward[0m=[35m-242.2706[0m [36msteps[0m=[35m28672[0m [36mupdate[0m=[35m56[0m [36mvalue_loss[0m=[35m49.6280[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5443[0m [36mpolicy_loss[0m=[35m0.0014[0m [36mreward[0m=[35m-225.3193[0m [36msteps[0m=[35m29184[0m [36mupdate[0m=[35m57[0m [36mvalue_loss[0m=[35m51.0422[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5358[0m [36mpolicy_loss[0m=[35m0.0086[0m [36mreward[0m=[35m-312.9569[0m [36msteps[0m=[35m29696[0m [36mupdate[0m=[35m58[0m [36mvalue_loss[0m=[35m84.7170[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5305[0m [36mpolicy_loss[0m=[35m0.0077[0m [36mreward[0m=[35m-204.6886[0m [36msteps[0m=[35m30208[0m [36mupdate[0m=[35m59[0m [36mvalue_loss[0m=[35m51.8545[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5216[0m [36mpolicy_loss[0m=[35m0.0101[0m [36mreward[0m=[35m-284.3382[0m [36msteps[0m=[35m30720[0m [36mupdate[0m=[35m60[0m [36mvalue_loss[0m=[35m85.6769[0m
+[1meval                          [0m [36mbest[0m=[35m-0.5154[0m [36meval_reward[0m=[35m-3.6283[0m [36msteps[0m=[35m30720[0m [36mupdate[0m=[35m60[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5552[0m [36mpolicy_loss[0m=[35m0.0075[0m [36mreward[0m=[35m-280.5429[0m [36msteps[0m=[35m31232[0m [36mupdate[0m=[35m61[0m [36mvalue_loss[0m=[35m70.7921[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5584[0m [36mpolicy_loss[0m=[35m0.0028[0m [36mreward[0m=[35m-211.2732[0m [36msteps[0m=[35m31744[0m [36mupdate[0m=[35m62[0m [36mvalue_loss[0m=[35m63.3424[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5421[0m [36mpolicy_loss[0m=[35m0.0022[0m [36mreward[0m=[35m-273.7269[0m [36msteps[0m=[35m32256[0m [36mupdate[0m=[35m63[0m [36mvalue_loss[0m=[35m64.7383[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5311[0m [36mpolicy_loss[0m=[35m-0.0008[0m [36mreward[0m=[35m-220.0244[0m [36msteps[0m=[35m32768[0m [36mupdate[0m=[35m64[0m [36mvalue_loss[0m=[35m55.2895[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5352[0m [36mpolicy_loss[0m=[35m0.0066[0m [36mreward[0m=[35m-261.7036[0m [36msteps[0m=[35m33280[0m [36mupdate[0m=[35m65[0m [36mvalue_loss[0m=[35m163.0768[0m
+[1meval                          [0m [36mbest[0m=[35m-0.5154[0m [36meval_reward[0m=[35m-3.5700[0m [36msteps[0m=[35m33280[0m [36mupdate[0m=[35m65[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5356[0m [36mpolicy_loss[0m=[35m0.0105[0m [36mreward[0m=[35m-318.3100[0m [36msteps[0m=[35m33792[0m [36mupdate[0m=[35m66[0m [36mvalue_loss[0m=[35m96.9698[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5395[0m [36mpolicy_loss[0m=[35m0.0091[0m [36mreward[0m=[35m-310.6190[0m [36msteps[0m=[35m34304[0m [36mupdate[0m=[35m67[0m [36mvalue_loss[0m=[35m84.9425[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5364[0m [36mpolicy_loss[0m=[35m0.0039[0m [36mreward[0m=[35m-210.9114[0m [36msteps[0m=[35m34816[0m [36mupdate[0m=[35m68[0m [36mvalue_loss[0m=[35m60.0414[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5399[0m [36mpolicy_loss[0m=[35m0.0063[0m [36mreward[0m=[35m-270.2447[0m [36msteps[0m=[35m35328[0m [36mupdate[0m=[35m69[0m [36mvalue_loss[0m=[35m78.1777[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5175[0m [36mpolicy_loss[0m=[35m0.0128[0m [36mreward[0m=[35m-175.6865[0m [36msteps[0m=[35m35840[0m [36mupdate[0m=[35m70[0m [36mvalue_loss[0m=[35m66.2457[0m
+[1meval                          [0m [36mbest[0m=[35m-0.5154[0m [36meval_reward[0m=[35m-1.2546[0m [36msteps[0m=[35m35840[0m [36mupdate[0m=[35m70[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5168[0m [36mpolicy_loss[0m=[35m0.0018[0m [36mreward[0m=[35m-267.2442[0m [36msteps[0m=[35m36352[0m [36mupdate[0m=[35m71[0m [36mvalue_loss[0m=[35m77.6646[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5176[0m [36mpolicy_loss[0m=[35m0.0169[0m [36mreward[0m=[35m-270.0684[0m [36msteps[0m=[35m36864[0m [36mupdate[0m=[35m72[0m [36mvalue_loss[0m=[35m69.3300[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4985[0m [36mpolicy_loss[0m=[35m-0.0014[0m [36mreward[0m=[35m-277.3396[0m [36msteps[0m=[35m37376[0m [36mupdate[0m=[35m73[0m [36mvalue_loss[0m=[35m83.8115[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4978[0m [36mpolicy_loss[0m=[35m0.0025[0m [36mreward[0m=[35m-260.3068[0m [36msteps[0m=[35m37888[0m [36mupdate[0m=[35m74[0m [36mvalue_loss[0m=[35m74.9740[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4697[0m [36mpolicy_loss[0m=[35m0.0187[0m [36mreward[0m=[35m-255.8278[0m [36msteps[0m=[35m38400[0m [36mupdate[0m=[35m75[0m [36mvalue_loss[0m=[35m78.3627[0m
+[1meval                          [0m [36mbest[0m=[35m-0.5154[0m [36meval_reward[0m=[35m-1.7243[0m [36msteps[0m=[35m38400[0m [36mupdate[0m=[35m75[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4620[0m [36mpolicy_loss[0m=[35m0.0045[0m [36mreward[0m=[35m-240.5386[0m [36msteps[0m=[35m38912[0m [36mupdate[0m=[35m76[0m [36mvalue_loss[0m=[35m63.4884[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4864[0m [36mpolicy_loss[0m=[35m0.0080[0m [36mreward[0m=[35m-192.2255[0m [36msteps[0m=[35m39424[0m [36mupdate[0m=[35m77[0m [36mvalue_loss[0m=[35m75.0531[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5193[0m [36mpolicy_loss[0m=[35m0.0207[0m [36mreward[0m=[35m-218.1449[0m [36msteps[0m=[35m39936[0m [36mupdate[0m=[35m78[0m [36mvalue_loss[0m=[35m139.3552[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5415[0m [36mpolicy_loss[0m=[35m0.0028[0m [36mreward[0m=[35m-165.4681[0m [36msteps[0m=[35m40448[0m [36mupdate[0m=[35m79[0m [36mvalue_loss[0m=[35m67.6523[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5611[0m [36mpolicy_loss[0m=[35m-0.0003[0m [36mreward[0m=[35m-248.1896[0m [36msteps[0m=[35m40960[0m [36mupdate[0m=[35m80[0m [36mvalue_loss[0m=[35m68.7040[0m
+[1meval                          [0m [36mbest[0m=[35m-0.5154[0m [36meval_reward[0m=[35m-1.9266[0m [36msteps[0m=[35m40960[0m [36mupdate[0m=[35m80[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5446[0m [36mpolicy_loss[0m=[35m0.0046[0m [36mreward[0m=[35m-246.9530[0m [36msteps[0m=[35m41472[0m [36mupdate[0m=[35m81[0m [36mvalue_loss[0m=[35m64.6399[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5366[0m [36mpolicy_loss[0m=[35m0.0053[0m [36mreward[0m=[35m-241.5406[0m [36msteps[0m=[35m41984[0m [36mupdate[0m=[35m82[0m [36mvalue_loss[0m=[35m102.0407[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5404[0m [36mpolicy_loss[0m=[35m0.0194[0m [36mreward[0m=[35m-272.4752[0m [36msteps[0m=[35m42496[0m [36mupdate[0m=[35m83[0m [36mvalue_loss[0m=[35m104.2770[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5273[0m [36mpolicy_loss[0m=[35m0.0072[0m [36mreward[0m=[35m-336.9430[0m [36msteps[0m=[35m43008[0m [36mupdate[0m=[35m84[0m [36mvalue_loss[0m=[35m107.8981[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.5132[0m [36mpolicy_loss[0m=[35m0.0082[0m [36mreward[0m=[35m-220.6371[0m [36msteps[0m=[35m43520[0m [36mupdate[0m=[35m85[0m [36mvalue_loss[0m=[35m74.1195[0m
+[1meval                          [0m [36mbest[0m=[35m-0.5154[0m [36meval_reward[0m=[35m-2.6219[0m [36msteps[0m=[35m43520[0m [36mupdate[0m=[35m85[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4909[0m [36mpolicy_loss[0m=[35m0.0141[0m [36mreward[0m=[35m-240.5689[0m [36msteps[0m=[35m44032[0m [36mupdate[0m=[35m86[0m [36mvalue_loss[0m=[35m84.4168[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4871[0m [36mpolicy_loss[0m=[35m0.0091[0m [36mreward[0m=[35m-286.0705[0m [36msteps[0m=[35m44544[0m [36mupdate[0m=[35m87[0m [36mvalue_loss[0m=[35m98.2230[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4854[0m [36mpolicy_loss[0m=[35m0.0145[0m [36mreward[0m=[35m-246.8469[0m [36msteps[0m=[35m45056[0m [36mupdate[0m=[35m88[0m [36mvalue_loss[0m=[35m85.6467[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4630[0m [36mpolicy_loss[0m=[35m0.0100[0m [36mreward[0m=[35m-285.7849[0m [36msteps[0m=[35m45568[0m [36mupdate[0m=[35m89[0m [36mvalue_loss[0m=[35m243.3870[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4474[0m [36mpolicy_loss[0m=[35m0.0112[0m [36mreward[0m=[35m-225.7635[0m [36msteps[0m=[35m46080[0m [36mupdate[0m=[35m90[0m [36mvalue_loss[0m=[35m77.9305[0m
+[1meval                          [0m [36mbest[0m=[35m-0.5154[0m [36meval_reward[0m=[35m-3.8739[0m [36msteps[0m=[35m46080[0m [36mupdate[0m=[35m90[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4451[0m [36mpolicy_loss[0m=[35m0.0076[0m [36mreward[0m=[35m-205.0958[0m [36msteps[0m=[35m46592[0m [36mupdate[0m=[35m91[0m [36mvalue_loss[0m=[35m91.4212[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4469[0m [36mpolicy_loss[0m=[35m0.0015[0m [36mreward[0m=[35m-210.8071[0m [36msteps[0m=[35m47104[0m [36mupdate[0m=[35m92[0m [36mvalue_loss[0m=[35m78.6147[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4368[0m [36mpolicy_loss[0m=[35m0.0130[0m [36mreward[0m=[35m-188.4145[0m [36msteps[0m=[35m47616[0m [36mupdate[0m=[35m93[0m [36mvalue_loss[0m=[35m78.1567[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4440[0m [36mpolicy_loss[0m=[35m0.0082[0m [36mreward[0m=[35m-216.4879[0m [36msteps[0m=[35m48128[0m [36mupdate[0m=[35m94[0m [36mvalue_loss[0m=[35m81.8945[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4299[0m [36mpolicy_loss[0m=[35m0.0130[0m [36mreward[0m=[35m-269.1499[0m [36msteps[0m=[35m48640[0m [36mupdate[0m=[35m95[0m [36mvalue_loss[0m=[35m104.6781[0m
+[1meval                          [0m [36mbest[0m=[35m-0.5154[0m [36meval_reward[0m=[35m-1.4413[0m [36msteps[0m=[35m48640[0m [36mupdate[0m=[35m95[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.3971[0m [36mpolicy_loss[0m=[35m0.0057[0m [36mreward[0m=[35m-238.7210[0m [36msteps[0m=[35m49152[0m [36mupdate[0m=[35m96[0m [36mvalue_loss[0m=[35m102.2815[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.3964[0m [36mpolicy_loss[0m=[35m0.0014[0m [36mreward[0m=[35m-216.3768[0m [36msteps[0m=[35m49664[0m [36mupdate[0m=[35m97[0m [36mvalue_loss[0m=[35m81.9606[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.3817[0m [36mpolicy_loss[0m=[35m-0.0019[0m [36mreward[0m=[35m-226.2893[0m [36msteps[0m=[35m50176[0m [36mupdate[0m=[35m98[0m [36mvalue_loss[0m=[35m264.9062[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.3957[0m [36mpolicy_loss[0m=[35m0.0015[0m [36mreward[0m=[35m-241.7277[0m [36msteps[0m=[35m50688[0m [36mupdate[0m=[35m99[0m [36mvalue_loss[0m=[35m223.9177[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4271[0m [36mpolicy_loss[0m=[35m0.0035[0m [36mreward[0m=[35m-274.0398[0m [36msteps[0m=[35m51200[0m [36mupdate[0m=[35m100[0m [36mvalue_loss[0m=[35m83.2286[0m
+[1meval                          [0m [36mbest[0m=[35m-0.5154[0m [36meval_reward[0m=[35m-2.2968[0m [36msteps[0m=[35m51200[0m [36mupdate[0m=[35m100[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4282[0m [36mpolicy_loss[0m=[35m0.0057[0m [36mreward[0m=[35m-284.9980[0m [36msteps[0m=[35m51712[0m [36mupdate[0m=[35m101[0m [36mvalue_loss[0m=[35m92.5661[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4286[0m [36mpolicy_loss[0m=[35m0.0023[0m [36mreward[0m=[35m-263.3527[0m [36msteps[0m=[35m52224[0m [36mupdate[0m=[35m102[0m [36mvalue_loss[0m=[35m100.6248[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4222[0m [36mpolicy_loss[0m=[35m0.0065[0m [36mreward[0m=[35m-181.6743[0m [36msteps[0m=[35m52736[0m [36mupdate[0m=[35m103[0m [36mvalue_loss[0m=[35m78.8277[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4098[0m [36mpolicy_loss[0m=[35m0.0107[0m [36mreward[0m=[35m-220.0615[0m [36msteps[0m=[35m53248[0m [36mupdate[0m=[35m104[0m [36mvalue_loss[0m=[35m82.9605[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4140[0m [36mpolicy_loss[0m=[35m0.0068[0m [36mreward[0m=[35m-203.4016[0m [36msteps[0m=[35m53760[0m [36mupdate[0m=[35m105[0m [36mvalue_loss[0m=[35m79.4509[0m
+[1meval                          [0m [36mbest[0m=[35m-0.5154[0m [36meval_reward[0m=[35m-3.4988[0m [36msteps[0m=[35m53760[0m [36mupdate[0m=[35m105[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4174[0m [36mpolicy_loss[0m=[35m0.0081[0m [36mreward[0m=[35m-274.6983[0m [36msteps[0m=[35m54272[0m [36mupdate[0m=[35m106[0m [36mvalue_loss[0m=[35m112.9659[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4042[0m [36mpolicy_loss[0m=[35m0.0041[0m [36mreward[0m=[35m-261.1873[0m [36msteps[0m=[35m54784[0m [36mupdate[0m=[35m107[0m [36mvalue_loss[0m=[35m90.5655[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.3915[0m [36mpolicy_loss[0m=[35m0.0063[0m [36mreward[0m=[35m-206.5277[0m [36msteps[0m=[35m55296[0m [36mupdate[0m=[35m108[0m [36mvalue_loss[0m=[35m106.9510[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4101[0m [36mpolicy_loss[0m=[35m0.0074[0m [36mreward[0m=[35m-232.8151[0m [36msteps[0m=[35m55808[0m [36mupdate[0m=[35m109[0m [36mvalue_loss[0m=[35m71.6313[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4173[0m [36mpolicy_loss[0m=[35m-0.0001[0m [36mreward[0m=[35m-236.5964[0m [36msteps[0m=[35m56320[0m [36mupdate[0m=[35m110[0m [36mvalue_loss[0m=[35m100.4732[0m
+[1meval                          [0m [36mbest[0m=[35m-0.5154[0m [36meval_reward[0m=[35m-2.7865[0m [36msteps[0m=[35m56320[0m [36mupdate[0m=[35m110[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4163[0m [36mpolicy_loss[0m=[35m0.0057[0m [36mreward[0m=[35m-281.3025[0m [36msteps[0m=[35m56832[0m [36mupdate[0m=[35m111[0m [36mvalue_loss[0m=[35m270.0607[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4270[0m [36mpolicy_loss[0m=[35m0.0020[0m [36mreward[0m=[35m-295.2077[0m [36msteps[0m=[35m57344[0m [36mupdate[0m=[35m112[0m [36mvalue_loss[0m=[35m99.9229[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4379[0m [36mpolicy_loss[0m=[35m0.0058[0m [36mreward[0m=[35m-222.9249[0m [36msteps[0m=[35m57856[0m [36mupdate[0m=[35m113[0m [36mvalue_loss[0m=[35m93.5099[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4375[0m [36mpolicy_loss[0m=[35m0.0093[0m [36mreward[0m=[35m-245.6304[0m [36msteps[0m=[35m58368[0m [36mupdate[0m=[35m114[0m [36mvalue_loss[0m=[35m117.0187[0m
+[1mppo_update                    [0m [36mentropy[0m=[35m-0.4460[0m [36mpolicy_loss[0m=[35m0.0013[0m [36mreward[0m=[35m-262.8946[0m [36msteps[0m=[35m58880[0m [36mupdate[0m=[35m115[0m [36mvalue_loss[0m=[35m135.1520[0m
+[1meval                          [0m [36mbest[0m=[35m-0.5154[0m [36meval_reward[0m=[35m-3.8480[0m [36msteps[0m=[35m58880[0m [36mupdate[0m=[35m115[0m
+[1mearly_stopping                [0m [36mbest_eval[0m=[35m-0.5154[0m [36mpatience[0m=[35m20[0m [36mstep[0m=[35m58880[0m
+
+════════════════════════════════════════════════════════════
+  Training Early Stopped — 495.0s
+════════════════════════════════════════════════════════════
+  Total updates:   115
+  Mean reward:     -234.7415
+  Std reward:      40.3399
+  Best eval reward:-0.5154
+  Saved to:        checkpoints/v9_conservative_r3/final_agent.pt
+
+  Update     Reward     P.Loss     V.Loss    Entropy
+  ──────────────────────────────────────────────────
+     512  -169.2596    -0.0010 66459405386560.8281     0.0297
+   1,024  -162.5488     0.0026   204.7195     0.0340
+   1,536  -167.5165     0.0008   279.6677     0.0111
+   2,048  -235.8026    -0.0002   420.9986    -0.0081
+   2,560  -157.6676     0.0052    87.5195    -0.0232
+   3,072  -201.8182    -0.0004   178.2207    -0.0430
+   3,584  -174.9744     0.0033   111.7544    -0.0699
+   4,096  -220.9914     0.0003   140.3438    -0.0861
+   4,608  -214.0283     0.0067   138.1744    -0.0961
+   5,120  -212.6606     0.0069   147.2284    -0.1069
+   5,632  -193.5112     0.0059    96.6514    -0.1123
+   6,144  -250.3874     0.0038   159.1683    -0.1159
+   6,656  -183.2129     0.0038    88.4397    -0.1098
+   7,168  -191.0995     0.0085   119.5966    -0.1112
+   7,680  -270.3503    -0.0033   173.5446    -0.1285
+   8,192  -171.2767     0.0048    62.6113    -0.1396
+   8,704  -164.4432     0.0055    65.2010    -0.1526
+   9,216  -216.6001    -0.0039   100.3126    -0.1728
+   9,728  -176.3468     0.0132    55.9007    -0.1811
+  10,240  -239.2335     0.0047   109.4695    -0.1987
+  10,752  -241.2872     0.0009    97.9226    -0.2139
+  11,264  -244.8158     0.0035    95.4179    -0.2207
+  11,776  -222.4749     0.0126    81.1731    -0.2235
+  12,288  -222.0567     0.0008    75.2596    -0.2352
+  12,800  -239.1197    -0.0048    96.7505    -0.2575
+  13,312  -180.6160     0.0022    48.9643    -0.2679
+  13,824  -191.9444    -0.0012    50.7139    -0.2997
+  14,336  -217.7392     0.0016    59.5261    -0.3122
+  14,848  -236.3664     0.0091    97.5689    -0.3432
+  15,360  -263.8383     0.0152    86.5323    -0.3520
+  15,872  -277.9443     0.0035    81.7437    -0.3557
+  16,384  -182.4792     0.0078    41.9197    -0.3695
+  16,896  -243.0642     0.0089   107.8117    -0.3841
+  17,408  -273.3703     0.0023    73.4775    -0.4070
+  17,920  -355.2197     0.0116   159.4180    -0.4060
+  18,432  -193.7038     0.0082    40.2518    -0.4111
+  18,944  -198.5003     0.0075    38.4125    -0.4337
+  19,456  -212.8915     0.0110    55.5313    -0.4424
+  19,968  -181.3445     0.0120    43.7686    -0.4585
+  20,480  -181.0505     0.0005    46.0502    -0.4684
+  20,992  -198.0930     0.0100    33.0955    -0.4683
+  21,504  -250.7276     0.0086    55.1788    -0.4841
+  22,016  -206.0594     0.0065    41.3000    -0.4764
+  22,528  -242.3190     0.0172    65.1341    -0.5085
+  23,040  -234.9338     0.0083    95.4432    -0.4976
+  23,552  -269.8227     0.0156    64.3978    -0.5010
+  24,064  -295.1337     0.0137    78.1395    -0.5210
+  24,576  -271.3936     0.0034    76.1266    -0.5209
+  25,088  -258.4074     0.0166    63.6179    -0.5422
+  25,600  -186.6973     0.0188    33.3779    -0.5674
+  26,112  -254.6543     0.0062    72.7625    -0.5710
+  26,624  -292.8136     0.0093    85.2438    -0.5670
+  27,136  -272.2498     0.0250    55.7063    -0.5687
+  27,648  -216.3094     0.0101    45.9892    -0.5642
+  28,160  -250.1606     0.0081    73.5331    -0.5706
+  28,672  -242.2706     0.0032    49.6280    -0.5657
+  29,184  -225.3193     0.0014    51.0422    -0.5443
+  29,696  -312.9569     0.0086    84.7170    -0.5358
+  30,208  -204.6886     0.0077    51.8545    -0.5305
+  30,720  -284.3382     0.0101    85.6769    -0.5216
+  31,232  -280.5429     0.0075    70.7921    -0.5552
+  31,744  -211.2732     0.0028    63.3424    -0.5584
+  32,256  -273.7269     0.0022    64.7383    -0.5421
+  32,768  -220.0244    -0.0008    55.2895    -0.5311
+  33,280  -261.7036     0.0066   163.0768    -0.5352
+  33,792  -318.3100     0.0105    96.9698    -0.5356
+  34,304  -310.6190     0.0091    84.9425    -0.5395
+  34,816  -210.9114     0.0039    60.0414    -0.5364
+  35,328  -270.2447     0.0063    78.1777    -0.5399
+  35,840  -175.6865     0.0128    66.2457    -0.5175
+  36,352  -267.2442     0.0018    77.6646    -0.5168
+  36,864  -270.0684     0.0169    69.3300    -0.5176
+  37,376  -277.3396    -0.0014    83.8115    -0.4985
+  37,888  -260.3068     0.0025    74.9740    -0.4978
+  38,400  -255.8278     0.0187    78.3627    -0.4697
+  38,912  -240.5386     0.0045    63.4884    -0.4620
+  39,424  -192.2255     0.0080    75.0531    -0.4864
+  39,936  -218.1449     0.0207   139.3552    -0.5193
+  40,448  -165.4681     0.0028    67.6523    -0.5415
+  40,960  -248.1896    -0.0003    68.7040    -0.5611
+  41,472  -246.9530     0.0046    64.6399    -0.5446
+  41,984  -241.5406     0.0053   102.0407    -0.5366
+  42,496  -272.4752     0.0194   104.2770    -0.5404
+  43,008  -336.9430     0.0072   107.8981    -0.5273
+  43,520  -220.6371     0.0082    74.1195    -0.5132
+  44,032  -240.5689     0.0141    84.4168    -0.4909
+  44,544  -286.0705     0.0091    98.2230    -0.4871
+  45,056  -246.8469     0.0145    85.6467    -0.4854
+  45,568  -285.7849     0.0100   243.3870    -0.4630
+  46,080  -225.7635     0.0112    77.9305    -0.4474
+  46,592  -205.0958     0.0076    91.4212    -0.4451
+  47,104  -210.8071     0.0015    78.6147    -0.4469
+  47,616  -188.4145     0.0130    78.1567    -0.4368
+  48,128  -216.4879     0.0082    81.8945    -0.4440
+  48,640  -269.1499     0.0130   104.6781    -0.4299
+  49,152  -238.7210     0.0057   102.2815    -0.3971
+  49,664  -216.3768     0.0014    81.9606    -0.3964
+  50,176  -226.2893    -0.0019   264.9062    -0.3817
+  50,688  -241.7277     0.0015   223.9177    -0.3957
+  51,200  -274.0398     0.0035    83.2286    -0.4271
+  51,712  -284.9980     0.0057    92.5661    -0.4282
+  52,224  -263.3527     0.0023   100.6248    -0.4286
+  52,736  -181.6743     0.0065    78.8277    -0.4222
+  53,248  -220.0615     0.0107    82.9605    -0.4098
+  53,760  -203.4016     0.0068    79.4509    -0.4140
+  54,272  -274.6983     0.0081   112.9659    -0.4174
+  54,784  -261.1873     0.0041    90.5655    -0.4042
+  55,296  -206.5277     0.0063   106.9510    -0.3915
+  55,808  -232.8151     0.0074    71.6313    -0.4101
+  56,320  -236.5964    -0.0001   100.4732    -0.4173
+  56,832  -281.3025     0.0057   270.0607    -0.4163
+  57,344  -295.2077     0.0020    99.9229    -0.4270
+  57,856  -222.9249     0.0058    93.5099    -0.4379
+  58,368  -245.6304     0.0093   117.0187    -0.4375
+  58,880  -262.8946     0.0013   135.1520    -0.4460
+════════════════════════════════════════════════════════════
+

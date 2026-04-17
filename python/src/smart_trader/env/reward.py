@@ -20,12 +20,17 @@ import numpy as np
 class RewardConfig:
     pnl_scale: float = 40.0          # scale raw step return to useful magnitude
     loss_aversion: float = 1.3       # multiply penalty for negative returns (asymmetric)
-    beta: float = 0.5                # drawdown penalty weight
+    beta: float = 2.0                # drawdown penalty weight (per-step)
     gamma: float = 0.2               # trading cost penalty weight
     trade_penalty: float = 0.01      # flat penalty per trade (discourages churn)
 
-    dd_threshold: float = 0.05       # drawdown % at which penalty kicks in
+    dd_threshold: float = 0.02       # drawdown % at which penalty kicks in
     dd_exponent: float = 2.0         # non-linear drawdown penalty exponent
+
+    # Terminal episode penalty: -(dd_terminal_weight × max_dd × pnl_scale)
+    # Applied once at episode end (not clipped by clip_reward).
+    # 0.0 = disabled. Use 1.0–2.0 for meaningful signal.
+    dd_terminal_weight: float = 0.0
 
     clip_reward: float = 3.0         # symmetric per-step reward clip
 
@@ -100,6 +105,19 @@ class RewardEngine:
             + churn_penalty
         )
         return float(np.clip(reward, -self.cfg.clip_reward, self.cfg.clip_reward))
+
+    def terminal_dd_reward(self) -> float:
+        """One-shot penalty at episode end proportional to max drawdown achieved.
+
+        Returns 0.0 when dd_terminal_weight is 0 (default, backward-compatible).
+        Intentionally NOT clipped so it registers as a meaningful terminal signal
+        even in long episodes.
+        """
+        if self.cfg.dd_terminal_weight == 0.0:
+            return 0.0
+        stats = self.get_episode_stats()
+        max_dd = float(stats.get("max_dd", 0.0))
+        return -(self.cfg.dd_terminal_weight * max_dd * self.cfg.pnl_scale)
 
     def get_episode_stats(self) -> dict:
         """Summary metrics for the completed episode."""

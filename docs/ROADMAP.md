@@ -1,24 +1,23 @@
 # Smart-Trader Roadmap
 
 > 本文档记录从 POC 到生产级 AI 原生交易系统的演进路径。
-> 最后更新：2026-04-16
+> 最后更新：2026-04-17
 >
 > **Jira 式分解（Epic / Story / Task）**：[`docs/implementation_todos.md`](implementation_todos.md)。
 
 ---
 
-## 近况快照（2026-04）
+## 近况快照（2026-04-17）
 
 | 领域 | 状态 | 说明 |
 |------|------|------|
 | **规则引擎** | 生产默认 | `trader --mode rule`；趋势 / 波动率 / 信号 / 风控 / 执行链路稳定运行。 |
-| **RL 实验线** | 可训可评可影子跑 | `scripts/train_rl_agent.py`（PPO）+ `MarketEnv`；观测含多周期特征与 **序列 lookback**；`scripts/eval_walkforward.py` 做 **20 折 × N 天** OOS；`trader --mode rl` / `shadow` + `InferenceConfig.shadow_mode` 做线上/纸面对照。**训练与 conservative WF 摩擦对齐**（`--cost-profile`、checkpoint 元数据）见 `docs/rl_train_sim_alignment.md`。 |
-| **OOS 结论（当前数据）** | 持续迭代 | 在统一 walk-forward（如 14 天窗口）下，**`v8_seq_reg` 系列**（`trade_penalty≈0.02`、适度正则）整体优于单纯加长步数（`v8_seq_reg_long`）或偏低惩罚版本；**`v7_long`** 仍为另一套骨干规模下的对照基线。图表见仓库根 `README.md` / `docs/assets/model_oos_comparison.svg`（由 `scripts/render_model_comparison_charts.py` 从本地 `checkpoints` 评估 JSON 生成）。 |
-| **数据** | 多交易所适配 | 业务侧经 `ExchangeAdapter` / `create_adapter()`；RL 训练/回测常用 Binance 库内蜡烛；`bulk_backfill` 等脚本用于缺口回补（详见 `python` 内脚本与 skill）。 |
-| **ML 信号过滤（Phase 1.1）** | 未开始 | LightGBM 后置过滤器仍属规划，与当前规则引擎并行开发优先级可按业务排期。 |
-| **工程** | 并行推进 | Prometheus/Grafana 等仍在路线图 Phase 4；Rust 执行引擎仍为激活目标而非默认路径。 |
-| **OOS / RL 迭代登记** | 进行中 | **`EPIC-OOS` 部分已完成**（运行角色、WF 默认参数、数据探活）；基线路径与双人复现待补。详见下方 **「迭代进度与冻结约定」**；`configs/README.md` 为配置目录入口。 |
-| **RL Bug 修复与优化** | 新增（待启动） | 代码审查发现 3 处正确性 Bug（GAE bootstrap、n_epochs 硬编码、risk_budget log_prob 错配）及 4 类性能优化（Transformer 末 token、state-dep std、观测归一化、微结构特征）。已拆分为 `EPIC-RL-OPT`，详见 `docs/implementation_todos.md`。 |
+| **RL 实验线** | **v9 搜索终止** | v9 架构（last-token Transformer + Beta dist + EMA obs norm + FR obs）；r1–r5 全部完成 WF 评估，均未过 shadow 门禁。**r4 为 v9 最终最佳**（Sharpe -1.51，MaxDD 1.89%，Win 50%，Mean Return -0.22%）。根本瓶颈：`lookback=1` + 63K 参数在 conservative 摩擦下信息量不足，高频小仓位无法覆盖摩擦成本。 |
+| **OOS 结论（v9 数据）** | **已结案** | r4 checkpoint：`checkpoints/v9_conservative_r4/best_agent.pt`（best eval -0.1089，step 33,280）。WF Mean Sharpe -1.51（未过 shadow 门禁 Sharpe > 0）。下一步：Phase 1.1 LightGBM 信号过滤器，或设计 v10 架构（lookback=10+，更大参数量）。 |
+| **数据** | 完备 | FR 100%（4700 行/symbol，2022–2026）；OI 30 天窗口；1m/1h/4h 蜡烛完整（Binance，2022-01-01）。 |
+| **EPIC-RL-OPT** | **已完成** | ST-OPT-01/02/03/04/05 全部落地（v9 架构优化 + reward shaping r3-r5）。见 `implementation_todos.md`。 |
+| **ML 信号过滤（Phase 1.1）** | **🟡 已启动** | `collect_signal_labels.py` 已写（历史信号回放 + 标注 → Parquet）。下一步：运行采集 → LightGBM 训练 → WF 验证。 |
+| **工程** | 并行推进 | Prometheus/Grafana 等在 Phase 4；Rust 执行引擎为激活目标。 |
 
 ---
 
@@ -55,7 +54,8 @@
 | 角色 | 标签 / 说明 | 路径或指针 | 状态 |
 |------|-------------|------------|------|
 | 规则、无 RL | *待登记* | — | [ ] |
-| RL 候选 checkpoint | *待登记* | — | [ ] |
+| RL v9 r2 | v9_conservative_r2，best eval +0.8422，WF Sharpe -1.15 | `checkpoints/v9_conservative_r2/best_agent.pt` | ✅ 已记录，未过门禁 |
+| **RL v9 r4（v9 最终最佳）** | best eval -0.1089（step 33,280），WF Sharpe -1.51，MaxDD 1.89%，Win 50% | `checkpoints/v9_conservative_r4/best_agent.pt` | ✅ v9 基线封档，未过门禁 |
 
 ### Epic `EPIC-RL` — 管线硬化（仅登记已书面项）
 
@@ -74,6 +74,7 @@
 | **ST-OPT-02** 评估稳定性 | **部分完成** | T-OPT-02-1（`eval_episodes` 15 + CLI）已落地；T-OPT-02-2（滑动均值早停）可选。 |
 | **ST-OPT-03** 网络架构优化 | **已完成** | T-OPT-03-1（末 token）、T-OPT-03-2（state-dep std）已落地。T-OPT-03-3：v9 烟雾测试 2026-04-16 通过（5000 steps, ETH/USDT, conservative）；全量 conservative 重训 CLI 已记录；对比 WF 图标为 optional。 |
 | **ST-OPT-04** 观测空间扩展 | **已完成** | T-OPT-04-1（Running obs normalization）、T-OPT-04-2（FR backfill + coverage 100%）、T-OPT-04-3（FR 特征集成，obs_dim 70→71，microstructure_dim=1）全部落地（2026-04-16）。OI 已有 30 天数据但训练覆盖率 < 2%，暂缓至 ≥ 6 个月后接入。 |
+| **ST-OPT-05** Reward Shaping | **已完成** | r3（dd_terminal=1.5）过度惩罚；r4（dd_terminal=0.3, trade_penalty=0.02）为 v9 最优；r5（trade_penalty=0.04）不改善频率且劣化 WF。超参数搜索终止，r4 封档。 |
 
 ---
 
