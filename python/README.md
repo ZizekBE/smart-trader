@@ -119,30 +119,41 @@ uv run python scripts/run_hybrid_backtest.py
 
 ### 5. RL 训练与 walk-forward 评估
 
+**当前最佳架构（v10）**：`lookback=10`（Transformer 序列模式）+ `regime_dim=2`（MarketRegime + VolRegime 编码注入 context）。v10 conservative r1 WF mean_sharpe = **-0.06**，较 v9（-1.51）大幅改善。
+
 ```bash
-uv run python scripts/train_rl_agent.py --symbols BTC/USDT ETH/USDT --exchange binance --timesteps 500000
-# ETH + conservative：训练 / WF / 门禁与 ../docs/rl_train_sim_alignment.md 一致（在 python/ 下执行）：
+# v10 标准训练（conservative，ETH/USDT）
 uv run python scripts/train_rl_agent.py \
-  --symbols ETH/USDT --exchange binance --cost-profile conservative \
-  --trade-penalty 0.035 --patience 45 --max-episode 3200 --weight-decay 2.5e-5 \
-  --timesteps 500000 --n-steps 2048 --batch-size 256 --seed 42 \
-  --checkpoint-dir ./checkpoints/eth_conservative_aligned_v1
-uv run python scripts/eval_walkforward.py \
-  --checkpoint ./checkpoints/eth_conservative_aligned_v1/best_agent.pt \
-  --symbols ETH/USDT --exchange binance --n-folds 20 --test-days 7 \
+  --symbols ETH/USDT --exchange binance \
   --cost-profile conservative \
-  --output ./checkpoints/eth_conservative_aligned_v1/wf_eth.eval.json
-uv run python scripts/wf_conservative_gate.py ./checkpoints/eth_conservative_aligned_v1/wf_eth.eval.json
-uv run python scripts/eval_walkforward.py --checkpoint ./checkpoints/xxx.pt --symbols BTC/USDT ETH/USDT --exchange binance
-# 保守执行成本（更高手续费/滑点/更浅深度），结果 JSON 会带 meta.cost_profile / meta.simulator：
-uv run python scripts/eval_walkforward.py --checkpoint ./checkpoints/xxx.pt --symbols ETH/USDT --exchange binance \
-  --cost-profile conservative --output ./checkpoints/xxx_wf_conservative.eval.json
-# 对 conservative WF 摘要做门槛检查（默认 configs/wf_gates.json 的 default_profile，多为 shadow；严档加 --profile target）：
-uv run python scripts/wf_conservative_gate.py ./checkpoints/xxx_wf_conservative.eval.json
-uv run python scripts/wf_conservative_gate.py ./checkpoints/xxx_wf_conservative.eval.json --profile target
+  --lookback 10 \
+  --timesteps 200000 \
+  --n-steps 2048 --batch-size 256 \
+  --d-model 128 --n-layers 2 --n-heads 4 \
+  --n-epochs 8 --eval-episodes 30 --patience 30 \
+  --trade-penalty 0.02 --dd-weight 2.0 --dd-threshold 0.02 \
+  --weight-decay 2.5e-5 \
+  --checkpoint-dir ./checkpoints/v10_conservative_r1 \
+  --seed 42
+
+# WF 评估（20 折 × 7d，conservative）
+uv run python scripts/eval_walkforward.py \
+  --checkpoint ./checkpoints/v10_conservative_r1/best_agent.pt \
+  --symbols ETH/USDT --exchange binance \
+  --n-folds 20 --test-days 7 \
+  --cost-profile conservative \
+  --output ./checkpoints/v10_conservative_r1/best_agent.eval.json
+
+# 协议验证（13 项检查，PASS 才算合规结果）
+uv run python scripts/verify_wf_protocol.py \
+  ./checkpoints/v10_conservative_r1/best_agent.eval.json
+
+# 门禁检查
+uv run python scripts/wf_conservative_gate.py \
+  ./checkpoints/v10_conservative_r1/best_agent.eval.json
 ```
 
-训练脚本默认 **`--d-model 64 --n-layers 1 --n-heads 4`**；默认 **`--trade-penalty 0.02`**、**`--weight-decay 2e-5`**、**`--entropy-coef-end 0.004`**（可用 CLI 覆盖）。`--cost-profile conservative` 与 `eval_walkforward.py --cost-profile conservative` 共用 `smart_trader.env.sim_profiles`。`eval_walkforward.py` 使用**相同架构默认**；`best_agent.pt` / `final_agent.pt` 的 `config` 会附带 `cost_profile` / `train_simulator` 等训练元数据（旧 checkpoint 无此字段不影响加载）。若出现 `state_dict` 错误，请显式传入与训练一致的 `--d-model`、`--n-layers`、`--n-heads`。
+`--no-regime` 可禁用 regime 特征注入（回退到 v9 行为）。训练脚本默认 **`--d-model 128 --n-layers 2 --n-heads 4 --lookback 10`**；`--cost-profile conservative` 与 `eval_walkforward.py` 共用 `smart_trader.env.sim_profiles`。若出现 `state_dict` 错误，请显式传入与训练一致的 `--d-model`、`--n-layers`、`--n-heads`、`--lookback`。
 
 批量对比多个 checkpoint（早停探测，数据只加载一次）：
 
@@ -218,19 +229,33 @@ python/
 
 ---
 
-## 八、后续待办（Todo / 路线图）
+## 八、进展记录与后续待办
 
-以下为与当前代码库一致的 **演进方向**，便于排期与协作（非强制顺序）。
+### 已完成（2026-04）
 
-| 状态 | 项目 |
+| 模块 | 内容 |
 |------|------|
-| 可持续 | **多品种 RL**：更长训练步数、课程学习（先 BTC 再 ETH）、walk-forward 早停与 checkpoint 选择。 |
-| 可持续 | **训练性能**：并行多环境 rollout、`torch.compile` / MPS/CUDA、减少逐步 Python↔Torch 开销。 |
-| 可持续 | **奖励与环境**：进一步抑制极端回撤、与实盘滑点/费率对齐。 |
-| 进行中/可选 | **执行层**：RL 决策与实盘 `ExecutionEngine` 全链路硬化、风控硬约束。 |
-| 可选 | **Rust 执行引擎**：低延迟路径与 Python 编排协同（见 `RUST_ENGINE_*` 配置）。 |
-| 可选 | **UI / API**：混合回测、RL 状态与报表的统一展示。 |
-| 运维 | **密钥**：仅使用 `configs/secrets/.env`；若历史曾误提交密钥，需轮换密钥并清理 Git 历史。 |
+| RL 稳定性 | v10 架构：`lookback=10` + `regime_dim=2`；WF mean_sharpe -1.51 → **-0.06** |
+| Regime 特征 | `env/regime_features.py`：批量预计算 MarketRegime + VolRegime，支持 1h→1d 降采样回退 |
+| 参数自动写回 | `scripts/write_opt_params.py`：把 Bayesian 优化最佳参数写入 `configs/envs/opt_params.env` |
+| 周度优化调度 | `infra/scheduler/install-cron.sh`（Host cron）+ `docker-compose.yml optimizer service` |
+| WF 协议验证 | `scripts/verify_wf_protocol.py`：13 项检查；v9 r4 / v10 r1 均 PASS |
+| 基线注册 | `docs/baselines.md`：rule_v2 + v9 r4 + v10 r1（当前最佳） |
+| 信号过滤 / 自适应参数 | Phase 1.1–2.3：LightGBM 信号过滤器、RegimeParamAdapter、多策略 sleeve |
+| opt_params 加载顺序 | `.env` → `opt_params.env` → `secrets/.env`（后者覆盖） |
+
+### 下一步（优先级排序）
+
+| 优先 | 项目 |
+|------|------|
+| P0 | **RL 门禁突破**：v10 r2，调高训练步数（300k）或 `--trade-penalty`，目标 mean_sharpe > 0 |
+| P1 | **FR/OI 微结构特征**：T-OPT-04-2/3，需先跑 `check_futures_coverage.py` 确认覆盖率 |
+| P1 | **EPIC-LAYER**：L1 Regime 路由、L2 规则 lift、L3 RL 路由（依赖 RL 稳定后） |
+| P2 | **训练性能**：并行多环境 rollout、`torch.compile` / MPS/CUDA |
+| P2 | **多品种 RL**：BTC/USDT + ETH/USDT 联合训练，课程学习 |
+| 可选 | **Rust 执行引擎**：低延迟路径（见 `RUST_ENGINE_*` 配置） |
+| 可选 | **UI / API**：混合回测、RL 状态与报表统一展示 |
+| 运维 | **密钥**：仅使用 `configs/secrets/.env`；历史误提交密钥需轮换并清理 Git 历史 |
 
 ---
 

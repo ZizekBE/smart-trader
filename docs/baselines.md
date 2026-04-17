@@ -34,37 +34,46 @@ cd python && uv run python scripts/run_optimization.py \
 
 | 项目 | 值 |
 |------|----|
-| 标签 | `v9_conservative_r4_20260417` |
-| 架构版本 | v9 (PPO, lookback=1, 63K params) |
-| 训练步数 | 84,480（早停，patience=20） |
-| Checkpoint (best) | `python/checkpoints/v9_conservative_r4/best_agent.pt` |
-| Checkpoint (final) | `python/checkpoints/v9_conservative_r4/final_agent.pt` |
-| Eval JSON | `python/checkpoints/v9_conservative_r4/best_agent.eval.json` |
+| 标签 | `v10_conservative_r1_20260417` |
+| 架构版本 | v10 (PPO, lookback=10, regime_dim=2, 63K params) |
+| 训练步数 | 200,000 |
+| Checkpoint (best) | `python/checkpoints/v10_conservative_r1/best_agent.pt` |
+| Checkpoint (final) | `python/checkpoints/v10_conservative_r1/final_agent.pt` |
+| Eval JSON | `python/checkpoints/v10_conservative_r1/best_agent.eval.json` |
 | Cost profile | `conservative` |
-| 训练详情 | `docs/training_runs/v9_conservative_r4_20260417.md` |
+| 训练详情 | — |
 
 **WF 结果摘要**（20 folds × 7d，ETH/USDT，binance，conservative）：
 
 | 指标 | 值 |
 |------|----|
-| Mean Sharpe | -1.51 |
-| Mean Return | -0.22% |
+| Mean Sharpe | **-0.06** |
+| Mean Return | -2.63% |
 | Win Rate | 50% |
-| Mean MaxDD | 1.89% |
-| 过 shadow 门禁 | ❌ |
+| Mean MaxDD | 20.57% |
+| 过 shadow 门禁 | ❌（接近，需继续训练） |
 
-**复现命令**（T-OOS-02-5 验证通过）：
+**复现命令**：
 
 ```bash
 cd python && uv run python scripts/eval_walkforward.py \
-  --checkpoint ./checkpoints/v9_conservative_r4/best_agent.pt \
+  --checkpoint ./checkpoints/v10_conservative_r1/best_agent.pt \
   --symbols ETH/USDT --exchange binance \
   --n-folds 20 --test-days 7 \
   --cost-profile conservative \
-  --output /tmp/verify_r4.eval.json
+  --output /tmp/verify_v10_r1.eval.json
 
-uv run python scripts/verify_wf_protocol.py /tmp/verify_r4.eval.json
+uv run python scripts/verify_wf_protocol.py /tmp/verify_v10_r1.eval.json
 ```
+
+---
+
+## RL 历史记录
+
+| 标签 | Mean Sharpe | 备注 |
+|------|-------------|------|
+| `v9_conservative_r4_20260417` | -1.51 | lookback=1，无 regime 上下文 |
+| `v10_conservative_r1_20260417` | **-0.06** | lookback=10 + regime_dim=2，当前最佳 |
 
 ---
 
