@@ -337,8 +337,8 @@ EPIC-OOS (评估协议) ──► EPIC-RL (RL 硬化) ──► EPIC-RL-OPT (Bug
 
 | 状态 | Task |
 |------|------|
-| [ ] | **T-L3-01-1**：选定单一方案：contextual 观测扩展 **或** MoE/软路由（与现有规划一致）。 |
-| [ ] | **T-L3-01-2**：拆开发任务（改 `MarketEnv`/观测、配置项、回归测试）— 实现细节单独 Epic 亦可。 |
+| [x] | **T-L3-01-1**：选定方案：**Contextual RL**（regime_code + vol_code 注入 SpaceConfig.context_dim）。已在 v10 训练中验证（regime_dim=2, lookback=10），WF mean_sharpe -1.51→-0.06。MoE/软路由推迟至 RL 稳定后。 |
+| [x] | **T-L3-01-2**：实现完成。`ObservationBuilder.build()` 新增 `regime_vec` 参数，自动 pad/trim 到 `regime_dim`；`RLTradingLoop` 新增 `_get_regime_vec()` 每 24 bar 重算一次 regime，带缓存与降级（失败时返回 0.5）；`rl_loop.py` 在 `_build_observation()` 中传入 regime_vec，打通 live 推理与训练观测对齐。 |
 
 ---
 

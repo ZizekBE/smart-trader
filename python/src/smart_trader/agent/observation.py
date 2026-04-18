@@ -71,6 +71,7 @@ class ObservationBuilder:
         tf_features: dict[str, np.ndarray],
         portfolio: PortfolioSnapshot | None = None,
         timestamp: pd.Timestamp | None = None,
+        regime_vec: np.ndarray | None = None,
     ) -> np.ndarray:
         """Construct the full observation vector.
 
@@ -78,6 +79,7 @@ class ObservationBuilder:
             tf_features: {timeframe: 1-D feature array} from FeatureEngine.
             portfolio:   Current portfolio state.  Defaults to neutral.
             timestamp:   Current bar timestamp for time embedding.
+            regime_vec:  Optional regime context array of length regime_dim.
         """
         portfolio = portfolio or PortfolioSnapshot()
         bar = self._bar_vector(tf_features)
@@ -103,7 +105,17 @@ class ObservationBuilder:
 
         micro = np.zeros(self.cfg.microstructure_dim, dtype=np.float32) if self.cfg.microstructure_dim > 0 else np.empty(0, dtype=np.float32)
         time_emb = self._time_embedding(timestamp)
-        context = np.concatenate([port_vec, micro, time_emb])
+
+        if self.cfg.regime_dim > 0:
+            if regime_vec is not None:
+                reg = np.asarray(regime_vec, dtype=np.float32).flatten()
+                reg = reg[:self.cfg.regime_dim] if len(reg) >= self.cfg.regime_dim else np.pad(reg, (0, self.cfg.regime_dim - len(reg)), constant_values=0.5)
+            else:
+                reg = np.full(self.cfg.regime_dim, 0.5, dtype=np.float32)
+        else:
+            reg = np.empty(0, dtype=np.float32)
+
+        context = np.concatenate([port_vec, micro, time_emb, reg])
 
         obs = np.concatenate([market, context])
         if len(obs) < self.obs_dim:

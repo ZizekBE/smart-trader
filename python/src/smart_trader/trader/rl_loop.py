@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import numpy as np
+import pandas as pd
 import structlog
 
 from smart_trader.agent.inference import InferenceConfig, InferenceService, ShadowMode
@@ -25,6 +26,8 @@ from smart_trader.exchange.base import ExchangeAdapter
 from smart_trader.exchange.feed import FeedManager
 from smart_trader.execution.position_manager import PositionManager
 from smart_trader.execution.risk_guard import RiskGuard, RiskLimits
+
+_REGIME_UPDATE_BARS = 24  # recompute regime every N 1h bars
 
 log = structlog.get_logger(__name__)
 
@@ -52,10 +55,14 @@ class RLTradingLoop:
         self._feed = FeedManager(adapter)
         self._symbols = symbols or get_settings().symbols
         self._timeframes = list(timeframes)
-        self._obs_builder = ObservationBuilder(space_config or SpaceConfig())
+        self._space_cfg = space_config or SpaceConfig()
+        self._obs_builder = ObservationBuilder(self._space_cfg)
         self._shadow: Optional[ShadowMode] = None
         self._running = False
         self._log = log.bind(loop="rl")
+
+        # regime context cache: {symbol → (regime_vec, bar_count)}
+        self._regime_cache: dict[str, tuple[np.ndarray, int]] = {}
 
         if inference_config.shadow_mode:
             self._shadow = ShadowMode(self._inference)
@@ -85,10 +92,46 @@ class RLTradingLoop:
         await self._adapter.close()
         self._log.info("rl_loop_stopped")
 
+    async def _get_regime_vec(self, symbol: str, ts: pd.Timestamp) -> np.ndarray | None:
+        """Return cached regime vector, recomputing every _REGIME_UPDATE_BARS bars."""
+        if self._space_cfg.regime_dim == 0:
+            return None
+
+        cached_vec, bar_count = self._regime_cache.get(symbol, (None, 0))
+        bar_count += 1
+
+        if cached_vec is not None and bar_count % _REGIME_UPDATE_BARS != 0:
+            self._regime_cache[symbol] = (cached_vec, bar_count)
+            return cached_vec
+
+        try:
+            from smart_trader.env.regime_features import compute_regime_features
+
+            hourly_df = await self._feature_store.get_candles(symbol, "1h", lookback=2000)
+            daily_df = await self._feature_store.get_candles(symbol, "1d", lookback=120)
+            if hourly_df is None or hourly_df.empty:
+                raise ValueError("no hourly data")
+
+            primary_row = pd.DataFrame({"close": [1.0]}, index=[ts])
+            reg_df = compute_regime_features(
+                daily_df if daily_df is not None else pd.DataFrame(),
+                hourly_df, primary_row, symbol, stride=6,
+            )
+            row = reg_df.iloc[0]
+            vec = np.array([row["regime_code"], row["vol_code"]], dtype=np.float32)
+            self._regime_cache[symbol] = (vec, bar_count)
+            self._log.debug("regime_updated", symbol=symbol,
+                            regime_code=float(vec[0]), vol_code=float(vec[1]))
+            return vec
+        except Exception as exc:
+            self._log.warning("regime_compute_failed", symbol=symbol, error=str(exc))
+            if cached_vec is not None:
+                self._regime_cache[symbol] = (cached_vec, bar_count)
+                return cached_vec
+            return np.full(self._space_cfg.regime_dim, 0.5, dtype=np.float32)
+
     async def _build_observation(self, symbol: str, candle) -> np.ndarray:
         """Build a full observation vector matching training format."""
-        import pandas as pd
-
         tf_features: dict[str, np.ndarray] = {}
         for tf in self._timeframes:
             feat_df = await self._feature_store.get_features(symbol, tf, lookback=1)
@@ -107,7 +150,8 @@ class RLTradingLoop:
             )
 
         ts = pd.Timestamp(candle.time) if hasattr(candle, "time") else None
-        return self._obs_builder.build(tf_features, portfolio, ts)
+        regime_vec = await self._get_regime_vec(symbol, ts) if ts is not None else None
+        return self._obs_builder.build(tf_features, portfolio, ts, regime_vec=regime_vec)
 
     async def _on_candle(self, candle) -> None:
         """Triggered on each new candle from the WebSocket feed."""
