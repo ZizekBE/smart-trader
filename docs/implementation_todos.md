@@ -323,8 +323,8 @@ EPIC-OOS (评估协议) ──► EPIC-RL (RL 硬化) ──► EPIC-RL-OPT (Bug
 
 | 状态 | Task |
 |------|------|
-| [ ] | **T-L1-01-1**：选定实现路径（HMM / 聚类 / TrendEngine 增强等），输出稳定状态时间序列。 |
-| [ ] | **T-L1-01-2**：分状态回测基础统计（收益、波动、样本量），判断状态是否有业务意义。 |
+| [x] | **T-L1-01-1**：选定实现路径（TrendEngine，6态：bear_trending/ranging/distribution/accumulation/bull_ranging/bull_trending），输出稳定状态时间序列（`regime_features.py`）。 |
+| [x] | **T-L1-01-2**：分状态回测基础统计（`scripts/analyse_regime_stats.py`）。结论：bull_ranging Sharpe最高（24h=1.08），distribution持续负（各周期Sharpe均负），状态有显著业务区分度，L2验证可继续推进。 |
 
 ### Story: L2 条件化 lift 验证（`ST-L2-01`）
 
