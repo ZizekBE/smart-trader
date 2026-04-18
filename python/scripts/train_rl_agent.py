@@ -71,6 +71,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--dd-terminal", type=float, default=0.0,
                     help="Terminal episode penalty weight: -(dd_terminal × max_dd × pnl_scale). "
                          "0 = disabled. Use 1.0–2.0 for strong terminal signal.")
+    p.add_argument("--sharpe-terminal", type=float, default=0.0,
+                    help="Terminal Sharpe reward weight: sharpe_terminal × clip(sharpe/3, -1, 1) × pnl_scale. "
+                         "Aligns training with WF Sharpe metric. Use 1.0–2.0.")
     p.add_argument(
         "--cost-profile",
         choices=("default", "conservative"),
@@ -310,6 +313,7 @@ def train(
             beta=args.dd_weight,
             dd_threshold=args.dd_threshold,
             dd_terminal_weight=args.dd_terminal,
+            sharpe_terminal_weight=args.sharpe_terminal,
         ),
         sim_config=sim_config,
         seed=args.seed,
@@ -388,7 +392,7 @@ def train(
     print(f"  patience:   {args.patience}")
     print(f"  weight_dec: {args.weight_decay}")
     print(f"  trade_pen:  {args.trade_penalty}")
-    print(f"  dd_weight:  {args.dd_weight}  dd_thr:{args.dd_threshold}  dd_term:{args.dd_terminal}")
+    print(f"  dd_weight:  {args.dd_weight}  dd_thr:{args.dd_threshold}  dd_term:{args.dd_terminal}  sharpe_term:{args.sharpe_terminal}")
     print(f"  cost_prof:  {args.cost_profile}")
     print(f"  ent_coef:   {args.entropy_coef} -> {args.entropy_coef_end}")
     print(f"  n_steps:    {args.n_steps}")

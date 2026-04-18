@@ -18,9 +18,9 @@ import numpy as np
 
 @dataclass
 class RewardConfig:
-    pnl_scale: float = 40.0          # scale raw step return to useful magnitude
-    loss_aversion: float = 1.3       # multiply penalty for negative returns (asymmetric)
-    beta: float = 2.0                # drawdown penalty weight (per-step)
+    pnl_scale: float = 50.0          # scale raw step return to useful magnitude
+    loss_aversion: float = 1.1       # multiply penalty for negative returns (asymmetric)
+    beta: float = 1.5                # drawdown penalty weight (per-step)
     gamma: float = 0.2               # trading cost penalty weight
     trade_penalty: float = 0.01      # flat penalty per trade (discourages churn)
 
@@ -31,6 +31,11 @@ class RewardConfig:
     # Applied once at episode end (not clipped by clip_reward).
     # 0.0 = disabled. Use 1.0–2.0 for meaningful signal.
     dd_terminal_weight: float = 0.0
+
+    # Terminal Sharpe reward: sharpe_terminal_weight × clip(episode_sharpe/3, -1, 1) × pnl_scale
+    # Aligns training objective with WF evaluation metric.
+    # 0.0 = disabled. Use 1.0–2.0 for strong alignment signal.
+    sharpe_terminal_weight: float = 0.0
 
     clip_reward: float = 3.0         # symmetric per-step reward clip
 
@@ -113,11 +118,26 @@ class RewardEngine:
         Intentionally NOT clipped so it registers as a meaningful terminal signal
         even in long episodes.
         """
-        if self.cfg.dd_terminal_weight == 0.0:
+        if self.cfg.dd_terminal_weight == 0.0 and self.cfg.sharpe_terminal_weight == 0.0:
             return 0.0
         stats = self.get_episode_stats()
-        max_dd = float(stats.get("max_dd", 0.0))
-        return -(self.cfg.dd_terminal_weight * max_dd * self.cfg.pnl_scale)
+        result = 0.0
+        if self.cfg.dd_terminal_weight != 0.0:
+            max_dd = float(stats.get("max_dd", 0.0))
+            result -= self.cfg.dd_terminal_weight * max_dd * self.cfg.pnl_scale
+        if self.cfg.sharpe_terminal_weight != 0.0:
+            returns = np.array(self.state.returns)
+            if len(returns) >= 2:
+                mean_r = float(np.mean(returns))
+                std_r = float(np.std(returns) + 1e-9)
+                # raw (non-annualized) Sharpe so short episodes don't explode
+                raw_sharpe = mean_r / std_r
+            else:
+                raw_sharpe = 0.0
+            # clip to [-1, 1], fixed ×clip_reward to stay bounded per episode
+            sharpe_signal = float(np.clip(raw_sharpe / 0.3, -1.0, 1.0))
+            result += self.cfg.sharpe_terminal_weight * sharpe_signal * self.cfg.clip_reward
+        return result
 
     def get_episode_stats(self) -> dict:
         """Summary metrics for the completed episode."""
