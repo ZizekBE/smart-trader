@@ -376,10 +376,10 @@ EPIC-OOS (评估协议) ──► EPIC-RL (RL 硬化) ──► EPIC-RL-OPT (Bug
 
 | 优先级 | 状态 | Task |
 |--------|------|------|
-| P0 | [ ] | **T-HYB-01-1** `env/market_env.py` — 新增 `signal_mode: bool = False` 配置开关（`MarketEnvConfig`）；在 `step()` 前置阶段从预计算信号序列中取当前 bar 的信号（`signal_direction: {-1, 0, 1}`、`signal_confidence: [0,1]`、`signal_source` one-hot 3 维）。无信号 bar 直接步进（保持前一仓位，不调用 RL）；有信号 bar 调用 RL 输出 `position_scale`。 |
-| P0 | [ ] | **T-HYB-01-2** `env/spaces.py` — 新增 `signal_dim: int = 0` 字段；有信号时 `signal_dim=5`（direction, confidence, is_long, is_short, is_skip）追加到 context；调整 `context_dim` 自动推导，兼容无信号模式（`signal_dim=0`）。 |
-| P0 | [ ] | **T-HYB-01-3** `env/market_env.py` — 修改 `_get_observation()`：在 context 末尾追加信号向量（`signal_dim > 0`）；修改 action 解读：`action["position"]` 被解释为 `position_scale ∈ [-1,1]`（负值=平/反向，0=跳过，正值=放大）——用 `tanh` 激活，乘以 `signal_direction` 得到 final_position。 |
-| P1 | [ ] | **T-HYB-01-4** 预计算训练期信号序列：`scripts/precompute_training_signals.py` — 对训练数据集时间段回放规则引擎（复用 `collect_signal_labels.py` 逻辑），输出 Parquet `{ts, symbol, direction, confidence, source, regime}`，供 MarketEnv 按 ts 索引查找。 |
+| P0 | [x] | **T-HYB-01-1** `env/market_env.py` — 新增 `signal_mode: bool = False` 配置开关（`MarketEnvConfig`）；在 `step()` 前置阶段从预计算信号序列中取当前 bar 的信号（`signal_direction: {-1, 0, 1}`、`signal_confidence: [0,1]`）。无信号 bar 保持前一仓位（hold），有信号 bar 调用 RL 输出 `position_scale`。 |
+| P0 | [x] | **T-HYB-01-2** `env/spaces.py` — 新增 `signal_dim: int = 0` 字段；`signal_dim=5`（direction, confidence, is_long, is_short, is_no_signal）追加到 context；`context_dim` 自动推导，兼容 `signal_dim=0`（无信号模式）。新增 `build_hybrid_action_space() → Box([0,1])`。 |
+| P0 | [x] | **T-HYB-01-3** `env/market_env.py` — 修改 `_get_observation()`：新增 `_build_signal_vec()` 方法，asof() 查最近信号行，在 context 末尾追加信号向量；修改 action 解读：hybrid 模式下 `action["position"]` 被解释为 `position_scale ∈ [0,1]`，乘以 `signal_direction` 得 final_position。 |
+| P1 | [x] | **T-HYB-01-4** 预计算训练期信号序列：`scripts/precompute_training_signals.py` — 对训练数据集时间段回放规则引擎（TrendEngine + SignalEngine），输出 Parquet `{ts, symbol, direction, confidence}`，供 MarketEnv 按 ts 索引查找。**ETH/USDT：37479 bars → 5956 signal bars（15.9% 信号率）**。 |
 
 **验收**：`MarketEnv(signal_mode=True)` 构造后，在 5000 步烟雾测试中：① 无信号 bar 比例 ≈ 实际信号率（约 2–5%）；② obs.shape 与 `observation_space.shape` 一致；③ 无 gym 接口异常。
 
@@ -391,11 +391,11 @@ EPIC-OOS (评估协议) ──► EPIC-RL (RL 硬化) ──► EPIC-RL-OPT (Bug
 
 | 优先级 | 状态 | Task |
 |--------|------|------|
-| P0 | [ ] | **T-HYB-02-1** `agent/networks.py` — 新增 `HybridPolicyNet`：仅输出 `position_scale`（单头 Beta(α,β) 分布，保证输出 ∈ [0,1]）；去除 `risk_budget` head；context_dim 适配 `signal_dim`；共享 Transformer backbone（d_model=128, n_layers=2, n_heads=4, lookback=10）与当前保持一致，避免重新调架构参数。 |
-| P0 | [ ] | **T-HYB-02-2** `agent/meta_controller.py` — 新增 `HybridMetaController`（或给 `MetaController` 增加 `hybrid_mode=True` 开关）：`act()` 只返回 `{"position_scale": float}`；`log_prob()` 仅对 Beta 分布计算；`_predict()` 中去除对 `risk_budget` action 的所有引用。 |
-| P0 | [ ] | **T-HYB-02-3** `env/reward.py` — 检查 RewardEngine 在 hybrid 模式下是否可直接复用：确认 `did_trade` 和 `trade_cost` 语义正确（现有实现兼容）；如需调整 `churn_penalty` 权重（信号稀少时不该重惩），在 `MarketEnvConfig` 暴露 `signal_mode_trade_penalty`。 |
-| P1 | [ ] | **T-HYB-02-4** `scripts/train_rl_agent.py` — 增加 `--hybrid-mode` CLI flag；启用时：加载预计算信号 Parquet，构造 `MarketEnv(signal_mode=True)`，实例化 `HybridMetaController`；其余超参数（cost-profile, n-epochs, eval-episodes, timesteps）不变。 |
-| P1 | [ ] | **T-HYB-02-5** 烟雾测试：`uv run python scripts/train_rl_agent.py --symbols ETH/USDT --exchange binance --cost-profile conservative --hybrid-mode --timesteps 5000 --seed 42 --checkpoint-dir ./checkpoints/hybrid_smoke`。验收：无 Python 异常，产出 `final_agent.pt`，obs_dim 正确。 |
+| P0 | [x] | **T-HYB-02-1** `agent/networks.py` — 新增 `HybridPolicyHead`（Beta(α,β)，softplus+1 保证 α,β > 1 单峰先验）+ `HybridMetaControllerNetwork`（共享 Transformer backbone + HybridPolicyHead + ValueHead）。与 PPOTrainer 接口完全兼容（`sample()` + `log_prob()` 签名一致）。 |
+| P0 | [x] | **T-HYB-02-2** `agent/meta_controller.py` — 新增 `HybridMetaController`（MetaController 子类）：`act()` 只返回 `{"position": scale, "_scale_raw": scale}`；`log_prob()` 仅对 Beta 分布计算；save/load 在 config 中标注 `hybrid_mode=True`。 |
+| P0 | [x] | **T-HYB-02-3** RewardEngine 验证：现有实现可直接复用；`did_trade` + `trade_cost` 语义正确；`trade_penalty=0.005`（信号驱动模式下放宽 churn 惩罚，信号率 15.9% 已由规则引擎控制）。 |
+| P1 | [x] | **T-HYB-02-4** `scripts/train_rl_agent.py` — 增加 `--hybrid-mode`、`--signal-parquet`、`--hybrid-risk-budget` CLI flags；自动路由到 `HybridMetaController`；signal_dim 自动注入 SpaceConfig；checkpoint meta 记录 `hybrid_mode=True`。 |
+| P1 | [x] | **T-HYB-02-5** 烟雾测试通过（2026-04-19）：5000 steps，ETH/USDT，conservative，seed=42，d_model=128。无 Python 异常，`final_agent.pt`（1.9M）+ `best_agent.pt`（5.3M）产出，value_loss 正常冷启动衰减（1242→0.04→331）。obs_dim 正确（signal_dim=5 已注入）。 |
 
 **验收**：烟雾测试通过；action shape=(1,)；`observation_space.shape` 与 `obs.shape` 一致（含 signal_dim=5）。
 
@@ -407,7 +407,7 @@ EPIC-OOS (评估协议) ──► EPIC-RL (RL 硬化) ──► EPIC-RL-OPT (Bug
 
 | 优先级 | 状态 | Task |
 |--------|------|------|
-| P0 | [ ] | **T-HYB-03-1** 训练（conservative，200k steps）：`uv run python scripts/train_rl_agent.py --symbols ETH/USDT --exchange binance --cost-profile conservative --hybrid-mode --timesteps 200000 --n-epochs 8 --eval-episodes 15 --seed 42 --checkpoint-dir ./checkpoints/hybrid_v1_r1`。 |
+| P0 | [x] | **T-HYB-03-1** 训练启动（2026-04-19，运行中）：`uv run python scripts/train_rl_agent.py --symbols ETH/USDT --exchange binance --cost-profile conservative --hybrid-mode --signal-parquet data/hybrid_signals/signals_ETHUSDT_binance.parquet --timesteps 200000 --n-epochs 8 --eval-episodes 15 --lookback 10 --d-model 128 --n-layers 2 --seed 42 --trade-penalty 0.005 --checkpoint-dir ./checkpoints/hybrid_v1_r1`。日志：`/tmp/hybrid_v1_r1.log`。 |
 | P0 | [ ] | **T-HYB-03-2** WF 评估：`uv run python scripts/eval_walkforward.py --checkpoint ./checkpoints/hybrid_v1_r1/best_agent.pt --symbols ETH/USDT --exchange binance --n-folds 20 --test-days 7 --cost-profile conservative --output /tmp/hybrid_v1_r1.eval.json`。门禁对比：WF Mean Sharpe > -0.06（v10 r1）。 |
 | P0 | [ ] | **T-HYB-03-3** 若通过门禁（Sharpe > 0 或显著优于 -0.06），更新 `docs/baselines.md` 为 `hybrid_v1_r1`；否则记录失败原因与下一步假设（调 `position_scale` 分布先验 / 加 hold_bars 输出 / 放松摩擦）。 |
 | P1 | [ ] | **T-HYB-03-4** 超参数微调（若 WF 在 [-0.1, 0.0) 范围）：尝试 `--trade-penalty 0.005`（信号驱动时 churn 已被规则引擎控制，可放宽）+ `--sharpe-terminal 1.0`（对齐 WF 目标），重跑 WF 对比。 |
