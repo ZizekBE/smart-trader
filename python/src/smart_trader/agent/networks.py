@@ -225,6 +225,53 @@ class PolicyHead(nn.Module):
         return log_p, entropy
 
 
+class HybridPolicyHead(nn.Module):
+    """1D position-scale policy for hybrid rule-engine + RL mode.
+
+    Outputs a single position_scale ∈ [0, 1] via Beta(α, β) distribution.
+    The caller multiplies by the rule-engine direction to get final position.
+    """
+
+    def __init__(self, d_model: int = 128, dropout: float = 0.05) -> None:
+        super().__init__()
+        self.shared = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.GELU(),
+            nn.Dropout(dropout),
+        )
+        self.alpha_head = nn.Linear(d_model, 1)
+        self.beta_head  = nn.Linear(d_model, 1)
+
+    def forward(self, features: torch.Tensor):
+        features = self.shared(features)
+        alpha = F.softplus(self.alpha_head(features)) + 1.0  # > 1 → unimodal
+        beta  = F.softplus(self.beta_head(features))  + 1.0
+        return alpha, beta
+
+    def sample(self, features: torch.Tensor) -> Tuple[dict, torch.Tensor]:
+        alpha, beta = self(features)
+        dist = Beta(alpha, beta)
+        scale = dist.sample().clamp(1e-6, 1.0 - 1e-6)
+        log_prob = dist.log_prob(scale).sum(-1)
+        action = {
+            "position":    scale.cpu().detach().numpy(),
+            "_scale_raw":  scale.cpu().detach().numpy(),
+        }
+        return action, log_prob
+
+    def log_prob(
+        self, features: torch.Tensor, actions: dict,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        alpha, beta = self(features)
+        dist = Beta(alpha, beta)
+        scale_t = torch.as_tensor(
+            actions["_scale_raw"], dtype=torch.float32, device=features.device,
+        ).clamp(1e-6, 1.0 - 1e-6)
+        log_p = dist.log_prob(scale_t).sum(-1)
+        entropy = dist.entropy().sum(-1)
+        return log_p, entropy
+
+
 class ValueHead(nn.Module):
     """Value function head — predicts expected return."""
 
@@ -259,6 +306,33 @@ class MetaControllerNetwork(nn.Module):
             lookback=lookback, context_dim=context_dim,
         )
         self.policy = PolicyHead(d_model)
+        self.value = ValueHead(d_model)
+
+    def forward(self, obs: torch.Tensor) -> Tuple[dict, torch.Tensor, torch.Tensor]:
+        features = self.backbone(obs)
+        action, log_prob = self.policy.sample(features)
+        value = self.value(features)
+        return action, log_prob, value
+
+
+class HybridMetaControllerNetwork(nn.Module):
+    """Hybrid Meta Controller: shared Transformer backbone + 1D Beta policy + value."""
+
+    def __init__(
+        self,
+        obs_dim: int,
+        d_model: int = 128,
+        n_heads: int = 4,
+        n_layers: int = 2,
+        lookback: int = 1,
+        context_dim: int = 0,
+    ) -> None:
+        super().__init__()
+        self.backbone = TransformerBackbone(
+            obs_dim, d_model, n_heads, n_layers,
+            lookback=lookback, context_dim=context_dim,
+        )
+        self.policy = HybridPolicyHead(d_model)
         self.value = ValueHead(d_model)
 
     def forward(self, obs: torch.Tensor) -> Tuple[dict, torch.Tensor, torch.Tensor]:

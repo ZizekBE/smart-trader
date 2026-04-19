@@ -21,6 +21,7 @@ class SpaceConfig:
     microstructure_dim: int = 0  # set >0 when real microstructure data is available
     time_dim: int = 4            # hour_sin, hour_cos, dow_sin, dow_cos
     regime_dim: int = 0          # regime context: set to 2 for (regime_code, vol_code)
+    signal_dim: int = 0          # hybrid mode: 5 = (direction, confidence, is_long, is_short, is_no_signal)
     lookback: int = 1            # bars of history in the observation sequence
 
     @property
@@ -30,8 +31,8 @@ class SpaceConfig:
 
     @property
     def context_dim(self) -> int:
-        """Portfolio + microstructure + time embedding + regime context."""
-        return self.portfolio_dim + self.microstructure_dim + self.time_dim + self.regime_dim
+        """Portfolio + microstructure + time embedding + regime + signal context."""
+        return self.portfolio_dim + self.microstructure_dim + self.time_dim + self.regime_dim + self.signal_dim
 
 
 def build_observation_space(cfg: SpaceConfig | None = None) -> spaces.Box:
@@ -62,6 +63,15 @@ def build_action_space() -> spaces.Dict:
         "risk_budget": spaces.Box(low=0.01, high=0.10, shape=(1,), dtype=np.float32),
         "hold_bars": spaces.Discrete(3),
     })
+
+
+def build_hybrid_action_space() -> spaces.Box:
+    """1D action space for the hybrid position sizer.
+
+    The RL agent outputs a single position_scale ∈ [0, 1] which is
+    multiplied by the rule-engine signal direction to get the final position.
+    """
+    return spaces.Box(low=0.0, high=1.0, shape=(1,), dtype=np.float32)
 
 
 def flatten_action(action: dict) -> np.ndarray:

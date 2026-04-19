@@ -104,6 +104,24 @@ def parse_args() -> argparse.Namespace:
         default=42,
         help="RNG seed for NumPy, PyTorch, and MarketEnv (reproducibility).",
     )
+    # Hybrid mode: rule engine direction + RL position sizing
+    p.add_argument(
+        "--hybrid-mode",
+        action="store_true",
+        help="Enable hybrid architecture: rule engine direction, RL position scale (1D Beta).",
+    )
+    p.add_argument(
+        "--signal-parquet",
+        default=None,
+        help="Path to precomputed signals Parquet from precompute_training_signals.py. "
+             "Required when --hybrid-mode is set. If omitted, script will auto-generate.",
+    )
+    p.add_argument(
+        "--hybrid-risk-budget",
+        type=float,
+        default=0.02,
+        help="Fixed risk budget per hybrid trade (default 0.02 = 2%% of portfolio).",
+    )
     return p.parse_args()
 
 
@@ -218,12 +236,47 @@ async def load_data(
     return datasets, funding_rates
 
 
+def _load_signal_data(
+    signal_parquet: str | None,
+    symbols: list[str],
+    exchange: str | None,
+) -> dict[str, pd.DataFrame]:
+    """Load precomputed signal Parquet into per-symbol DataFrames."""
+    import asyncio as _asyncio
+    import subprocess, sys as _sys
+
+    if signal_parquet is None:
+        # Auto-generate signals
+        sym_tag = "_".join(s.replace("/", "") for s in symbols)
+        ex_tag = exchange or "binance"
+        auto_path = Path("data/hybrid_signals") / f"signals_{sym_tag}_{ex_tag}.parquet"
+        if not auto_path.exists():
+            log.info("no_signal_parquet_found, generating...", path=str(auto_path))
+            cmd = [
+                _sys.executable, str(Path(__file__).parent / "precompute_training_signals.py"),
+                "--symbols", *symbols,
+                "--exchange", ex_tag,
+                "--output", str(auto_path),
+            ]
+            subprocess.run(cmd, check=True)
+        signal_parquet = str(auto_path)
+
+    df = pd.read_parquet(signal_parquet)
+    result: dict[str, pd.DataFrame] = {}
+    for symbol in symbols:
+        sym_df = df[df["symbol"] == symbol][["direction", "confidence"]] if "symbol" in df.columns else df[["direction", "confidence"]]
+        result[symbol] = sym_df.sort_index()
+        log.info("signal_data_loaded", symbol=symbol, rows=len(sym_df),
+                 signal_bars=int((sym_df["direction"] != 0).sum()))
+    return result
+
+
 def train(
     args: argparse.Namespace,
     datasets: dict[str, dict[str, pd.DataFrame]],
     funding_rates: dict[str, pd.Series] | None = None,
 ) -> None:
-    from smart_trader.agent.meta_controller import MetaController
+    from smart_trader.agent.meta_controller import HybridMetaController, MetaController
     from smart_trader.agent.trainer import PPOConfig, PPOTrainer
     from smart_trader.data.features.engine import FeatureConfig, compute_features
     from smart_trader.env.market_env import MarketEnv, MarketEnvConfig
@@ -288,12 +341,25 @@ def train(
             log.info("regime_features_ready", symbols=list(regime_features.keys()),
                      regime_dim=regime_dim)
 
+    # Hybrid mode: load signal Parquet and inject signal_dim=5 into obs
+    signal_data: dict | None = None
+    signal_dim = 0
+    if getattr(args, "hybrid_mode", False):
+        signal_data = _load_signal_data(
+            getattr(args, "signal_parquet", None),
+            list(datasets.keys()),
+            args.exchange,
+        )
+        signal_dim = 5
+        log.info("hybrid_mode_enabled", signal_dim=signal_dim, symbols=list(signal_data.keys()))
+
     space_cfg = SpaceConfig(
         n_timeframes=n_tf,
         features_per_tf=actual_features_per_tf,
         lookback=args.lookback,
         microstructure_dim=micro_dim,
         regime_dim=regime_dim,
+        signal_dim=signal_dim,
     )
 
     primary_tf = "1m" if "1m" in first_data else list(first_data.keys())[0]
@@ -319,6 +385,9 @@ def train(
         seed=args.seed,
         funding_rates=funding_rates or None,
         regime_features=regime_features,
+        signal_mode=bool(getattr(args, "hybrid_mode", False)),
+        signal_data=signal_data,
+        hybrid_risk_budget=float(getattr(args, "hybrid_risk_budget", 0.02)),
     )
 
     env = MarketEnv(env_config)
@@ -336,7 +405,8 @@ def train(
     log.info("sanity_check_passed", reward=f"{reward:.6f}", info_keys=list(info2.keys()))
 
     # build agent
-    agent = MetaController(
+    _AgentClass = HybridMetaController if getattr(args, "hybrid_mode", False) else MetaController
+    agent = _AgentClass(
         obs_dim=obs_dim,
         d_model=args.d_model,
         n_heads=args.n_heads,
@@ -386,7 +456,8 @@ def train(
     print(f"{'═'*60}")
     print(f"  symbols:    {sym_str}")
     print(f"  obs_dim:    {obs_dim}")
-    print(f"  lookback:   {args.lookback}  regime_dim:{regime_dim}")
+    print(f"  lookback:   {args.lookback}  regime_dim:{regime_dim}  signal_dim:{signal_dim}")
+    print(f"  hybrid:     {getattr(args, 'hybrid_mode', False)}")
     print(f"  d_model:    {args.d_model}")
     print(f"  params:     {param_count:,}")
     print(f"  patience:   {args.patience}")
@@ -432,6 +503,8 @@ def train(
             "entropy_coef_end": args.entropy_coef_end,
             "n_epochs": args.n_epochs,
             "eval_episodes": args.eval_episodes,
+            "hybrid_mode": bool(getattr(args, "hybrid_mode", False)),
+            "signal_dim": signal_dim,
         },
     )
 

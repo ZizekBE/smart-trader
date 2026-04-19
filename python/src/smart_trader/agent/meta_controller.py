@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from smart_trader.agent.networks import MetaControllerNetwork
+from smart_trader.agent.networks import HybridMetaControllerNetwork, MetaControllerNetwork
 
 
 class MetaController:
@@ -149,3 +149,90 @@ class MetaController:
         dummy = torch.randn(1, obs_dim, device=self.device)
         scripted = torch.jit.trace(self.network, dummy)
         scripted.save(str(path))
+
+
+class HybridMetaController(MetaController):
+    """Rule-engine direction + RL position-scale agent.
+
+    Uses a 1D Beta policy instead of the full hierarchical action space.
+    Compatible with PPOTrainer — only the network and act() differ.
+    """
+
+    def __init__(
+        self,
+        obs_dim: int,
+        d_model: int = 128,
+        n_heads: int = 4,
+        n_layers: int = 2,
+        device: str = "cpu",
+        lookback: int = 1,
+        context_dim: int = 0,
+    ) -> None:
+        # Bypass MetaController.__init__ — we set network directly
+        self.device = torch.device(device)
+        self.network = HybridMetaControllerNetwork(
+            obs_dim, d_model, n_heads, n_layers,
+            lookback=lookback, context_dim=context_dim,
+        )
+        self.network.to(self.device)
+        self._deterministic = False
+
+    @torch.no_grad()
+    def act(
+        self, obs: np.ndarray, deterministic: bool = False,
+    ) -> tuple[dict, float, float]:
+        obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
+        features = self.network.backbone(obs_t)
+
+        if deterministic or self._deterministic:
+            alpha, beta_param = self.network.policy(features)
+            mode = (alpha - 1.0) / (alpha + beta_param - 2.0 + 1e-8)
+            scale = mode.clamp(0.0, 1.0).cpu().numpy().flatten()
+            log_prob = 0.0
+        else:
+            action_raw, lp = self.network.policy.sample(features)
+            scale = action_raw["position"].flatten().astype(np.float32)
+            log_prob = float(lp.item())
+
+        value = float(self.network.value(features).item())
+        action_out = {
+            "position":   scale,
+            "_scale_raw": scale.copy(),
+        }
+        return action_out, log_prob, value
+
+    def save(self, path: str | Path, optimizer=None, step: int = 0,
+             extra: dict | None = None) -> None:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        bb = self.network.backbone
+        obs_dim = (
+            bb.lookback * bb.token_dim + bb.context_dim
+            if bb.lookback > 1 and bb.context_dim > 0
+            else bb.projection.in_features
+        )
+        payload = {
+            "model_state": self.network.state_dict(),
+            "config": {
+                "obs_dim": obs_dim,
+                "d_model": bb.output_dim,
+                "n_layers": len(bb.encoder.layers),
+                "n_heads": int(bb.encoder.layers[0].self_attn.num_heads),
+                "lookback": bb.lookback,
+                "context_dim": bb.context_dim,
+                "hybrid_mode": True,
+            },
+            "step": step,
+        }
+        if optimizer is not None:
+            payload["optimizer_state"] = optimizer.state_dict()
+        if extra:
+            payload.update(extra)
+        torch.save(payload, path)
+
+    def load(self, path: str | Path, optimizer=None) -> dict:
+        ckpt = torch.load(path, map_location=self.device, weights_only=False)
+        self.network.load_state_dict(ckpt["model_state"])
+        if optimizer is not None and "optimizer_state" in ckpt:
+            optimizer.load_state_dict(ckpt["optimizer_state"])
+        return {k: v for k, v in ckpt.items() if k not in ("model_state", "optimizer_state")}

@@ -31,7 +31,12 @@ from smart_trader.env.simulator import (
     Position,
     SimulatorConfig,
 )
-from smart_trader.env.spaces import SpaceConfig, build_action_space, build_observation_space
+from smart_trader.env.spaces import (
+    SpaceConfig,
+    build_action_space,
+    build_hybrid_action_space,
+    build_observation_space,
+)
 
 _HOLD_BARS_MAP = {0: 15, 1: 60, 2: 240}  # 15m / 1h / 4h in 1m bars
 
@@ -63,6 +68,12 @@ class MarketEnvConfig:
     # dict[symbol → DataFrame(regime_code, vol_code)] indexed by primary-tf timestamps.
     # When provided, SpaceConfig.regime_dim must equal 2.
     regime_features: dict | None = None  # dict[str, pd.DataFrame]
+    # Hybrid mode: rule engine provides direction, RL optimizes position scale.
+    # signal_data: dict[symbol → DataFrame(direction, confidence)] indexed by primary-tf ts.
+    # When True, SpaceConfig.signal_dim must equal 5.
+    signal_mode: bool = False
+    signal_data: dict | None = None        # dict[str, pd.DataFrame]
+    hybrid_risk_budget: float = 0.02       # fixed risk per hybrid trade
 
 
 class MarketEnv(gym.Env):
@@ -76,7 +87,9 @@ class MarketEnv(gym.Env):
         self._rng = np.random.default_rng(self.cfg.seed)
 
         self.observation_space = build_observation_space(self.cfg.space_config)
-        self.action_space = build_action_space()
+        self.action_space = (
+            build_hybrid_action_space() if self.cfg.signal_mode else build_action_space()
+        )
 
         self._sim = MarketSimulator(self.cfg.sim_config)
         self._reward_engine = RewardEngine(self.cfg.reward_config)
@@ -94,6 +107,16 @@ class MarketEnv(gym.Env):
             for sym, df in self.cfg.regime_features.items():
                 self._reg_by_sym[sym] = df.sort_index()
         self._cur_reg: pd.DataFrame | None = None
+
+        # Signal data lookup for hybrid mode: {symbol → DataFrame(direction, confidence)}
+        self._sig_by_sym: dict[str, pd.DataFrame] = {}
+        if self.cfg.signal_data:
+            for sym, df in self.cfg.signal_data.items():
+                self._sig_by_sym[sym] = df.sort_index()
+        self._cur_sig: pd.DataFrame | None = None
+        self._current_signal_vec: np.ndarray = np.zeros(
+            self.cfg.space_config.signal_dim, dtype=np.float32
+        )
 
         self._select_symbol(list(self._all_features.keys())[0])
         self._reset_state()
@@ -125,30 +148,51 @@ class MarketEnv(gym.Env):
         obs = self._get_observation()
         return obs, self._info()
 
-    def step(self, action: dict) -> tuple[np.ndarray, float, bool, bool, dict]:
+    def step(self, action) -> tuple[np.ndarray, float, bool, bool, dict]:
         prev_value = self._portfolio_value()
-
-        target_pos = float(np.asarray(action["position"]).flat[0])
-        target_pos = float(np.clip(target_pos, -1, 1))
-        risk_budget = float(np.asarray(action["risk_budget"]).flat[0])
-        risk_budget = float(np.clip(risk_budget, 0.01, 0.10))
-        hold_bars = _HOLD_BARS_MAP.get(int(np.asarray(action["hold_bars"]).flat[0]), 1)
 
         total_cost = 0.0
         did_trade = False
 
-        # execute for hold_bars steps (or until episode ends)
-        for _ in range(hold_bars):
-            if self._step >= self._max_step:
-                break
+        if self.cfg.signal_mode:
+            # Hybrid mode: action is a 1D scalar position_scale ∈ [0, 1]
+            scale = float(np.asarray(action).flat[0]) if not isinstance(action, dict) else float(
+                np.asarray(action.get("position", action)).flat[0]
+            )
+            scale = float(np.clip(scale, 0.0, 1.0))
+            direction = int(self._current_signal_vec[0] if len(self._current_signal_vec) > 0 else 0)
+            risk_budget = self.cfg.hybrid_risk_budget
 
-            bar = self._get_bar(self._step)
-            cost, traded = self._execute_target(target_pos, risk_budget, bar)
-            total_cost += cost
-            did_trade = did_trade or traded
+            if self._step < self._max_step:
+                bar = self._get_bar(self._step)
+                if direction != 0:
+                    # Signal bar: execute scaled position in signal direction
+                    target_pos = float(np.clip(direction * scale, -1.0, 1.0))
+                    cost, traded = self._execute_target(target_pos, risk_budget, bar)
+                    total_cost += cost
+                    did_trade = traded
+                # No-signal bar: hold current position, no trade
+                self._update_position_pnl(bar["close"])
+                self._step += 1
+        else:
+            target_pos = float(np.asarray(action["position"]).flat[0])
+            target_pos = float(np.clip(target_pos, -1, 1))
+            risk_budget = float(np.asarray(action["risk_budget"]).flat[0])
+            risk_budget = float(np.clip(risk_budget, 0.01, 0.10))
+            hold_bars = _HOLD_BARS_MAP.get(int(np.asarray(action["hold_bars"]).flat[0]), 1)
 
-            self._update_position_pnl(bar["close"])
-            self._step += 1
+            # execute for hold_bars steps (or until episode ends)
+            for _ in range(hold_bars):
+                if self._step >= self._max_step:
+                    break
+
+                bar = self._get_bar(self._step)
+                cost, traded = self._execute_target(target_pos, risk_budget, bar)
+                total_cost += cost
+                did_trade = did_trade or traded
+
+                self._update_position_pnl(bar["close"])
+                self._step += 1
 
         curr_value = self._portfolio_value()
 
@@ -174,6 +218,9 @@ class MarketEnv(gym.Env):
     def _reset_state(self) -> None:
         self._cash = self.cfg.initial_cash
         self._position = Position(symbol="", side="flat")
+        self._current_signal_vec = np.zeros(
+            self.cfg.space_config.signal_dim, dtype=np.float32
+        )
 
         data_len = len(self._primary_data) - 1
         latest_start = max(self._warmup_bars, data_len - self.cfg.max_episode_bars)
@@ -219,6 +266,7 @@ class MarketEnv(gym.Env):
         self._warmup_bars = min(200, len(self._primary_data) // 4)
         self._cur_fr  = self._fr_by_sym.get(sym)
         self._cur_reg = self._reg_by_sym.get(sym)
+        self._cur_sig = self._sig_by_sym.get(sym)
 
     def _get_bar(self, idx: int) -> dict:
         row = self._primary_data.iloc[idx]
@@ -329,7 +377,14 @@ class MarketEnv(gym.Env):
         else:
             reg_vec = np.zeros(sc.regime_dim, dtype=np.float32)
 
-        context = np.concatenate([portfolio, micro, time_emb, reg_vec])
+        # signal context for hybrid mode (direction, confidence, is_long, is_short, is_no_signal)
+        if sc.signal_dim > 0:
+            sig_vec = self._build_signal_vec()
+            self._current_signal_vec = sig_vec
+        else:
+            sig_vec = np.empty(0, dtype=np.float32)
+
+        context = np.concatenate([portfolio, micro, time_emb, reg_vec, sig_vec])
 
         obs = np.concatenate([market, context])
         expected = self.observation_space.shape[0]
@@ -341,6 +396,26 @@ class MarketEnv(gym.Env):
         if self._obs_norm is not None:
             obs = self._obs_norm.normalize(obs)
         return obs
+
+    def _build_signal_vec(self) -> np.ndarray:
+        """Build signal context vector for hybrid mode.
+
+        Format: [direction (-1/0/1), confidence (0-1), is_long, is_short, is_no_signal]
+        """
+        direction, confidence = 0.0, 0.0
+        if self._cur_sig is not None and self._step < len(self._primary_data):
+            ts = self._primary_data.index[self._step]
+            try:
+                row = self._cur_sig.asof(ts)
+                if row is not None and not pd.isna(row.get("direction", float("nan"))):
+                    direction = float(row["direction"])
+                    confidence = float(row.get("confidence", 0.5))
+            except Exception:
+                pass
+        is_long = 1.0 if direction > 0 else 0.0
+        is_short = 1.0 if direction < 0 else 0.0
+        is_no_signal = 1.0 if direction == 0.0 else 0.0
+        return np.array([direction, confidence, is_long, is_short, is_no_signal], dtype=np.float32)
 
     # ── execution logic ────────────────────────────────────────
 
