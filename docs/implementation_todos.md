@@ -14,9 +14,12 @@ EPIC-OOS (评估协议) ──► EPIC-RL (RL 硬化) ──► EPIC-RL-OPT (Bug
                               │                         │
                               ▼                         ▼
                        EPIC-SHADOW (影子与混合) ◄────────┘
-         EPIC-ML ─────────┘（可与 EPIC-RL 并行）
-         EPIC-LAYER ──────┘（方法论验证，可晚于 RL）
-         EPIC-ENG ─────────►（与上列并行）
+         EPIC-ML ─────────┘（可与 EPIC-RL 并行）          │
+         EPIC-LAYER ──────┘（方法论验证，可晚于 RL）        │
+         EPIC-ENG ─────────►（与上列并行）                 │
+                                                          ▼
+                                          EPIC-HYBRID (规则引擎方向 + RL 仓位优化)
+                                          └─── 依赖 EPIC-ML 信号源 + EPIC-LAYER L3
 ```
 
 ---
@@ -339,6 +342,88 @@ EPIC-OOS (评估协议) ──► EPIC-RL (RL 硬化) ──► EPIC-RL-OPT (Bug
 |------|------|
 | [x] | **T-L3-01-1**：选定方案：**Contextual RL**（regime_code + vol_code 注入 SpaceConfig.context_dim）。已在 v10 训练中验证（regime_dim=2, lookback=10），WF mean_sharpe -1.51→-0.06。MoE/软路由推迟至 RL 稳定后。 |
 | [x] | **T-L3-01-2**：实现完成。`ObservationBuilder.build()` 新增 `regime_vec` 参数，自动 pad/trim 到 `regime_dim`；`RLTradingLoop` 新增 `_get_regime_vec()` 每 24 bar 重算一次 regime，带缓存与降级（失败时返回 0.5）；`rl_loop.py` 在 `_build_observation()` 中传入 regime_vec，打通 live 推理与训练观测对齐。 |
+
+---
+
+## Epic: 混合架构 — 规则引擎方向 + RL 仓位优化（`EPIC-HYBRID`）
+
+**依赖**：`EPIC-LAYER`（L3 contextual RL 完成，v10 baseline -0.06 Sharpe 已验证）；`EPIC-ML`（LightGBM 过滤器运行中，信号源稳定）。
+
+**背景与动机**：多轮实验（v9 r1–r5、v10 r1–r3、v11、multi-symbol）证明纯 RL（同时输出方向 + 仓位）在 conservative 摩擦（0.1% taker + 15bps slippage）下无法突破 WF Sharpe=0 门禁。根本原因：
+1. 1h 行情 alpha 信号本身微弱（0.53 AUC），RL 无足够信号可学；
+2. 训练-WF gap 结构性存在（r2: train eval +0.87 / WF -1.14，严重过拟合）；
+3. direction + sizing 联合优化空间过大（3D action）对 conservative 成本极度敏感。
+
+**解决思路**：职责分离。规则引擎（已验证信号质量，LightGBM 过滤后 WR=69.9%）负责方向决策；RL 仅优化「在信号触发时用多少仓位（0–1）」。RL 动作空间压缩至 1D Box([0,1])，学习难度大幅降低，奖励信号更清晰。
+
+```
+规则引擎信号 ──► 方向 (LONG/SHORT/SKIP) ────────────────────────────► 执行层
+                      │
+                      └──► RL Position Sizer
+                                  ▲
+                           当前状态 obs（市场特征 + portfolio + regime）
+                                  │
+                           输出 position_scale ∈ [0, 1]
+                                  │
+                           final_size = base_size × position_scale
+```
+
+---
+
+### Story: 信号条件化 MarketEnv（`ST-HYB-01`）
+
+**I want** 训练环境在规则引擎有信号时才让 RL 做决策，且将信号置信度/方向注入 obs **so that** RL 学到「什么情况下该放大/缩小仓位」。
+
+| 优先级 | 状态 | Task |
+|--------|------|------|
+| P0 | [ ] | **T-HYB-01-1** `env/market_env.py` — 新增 `signal_mode: bool = False` 配置开关（`MarketEnvConfig`）；在 `step()` 前置阶段从预计算信号序列中取当前 bar 的信号（`signal_direction: {-1, 0, 1}`、`signal_confidence: [0,1]`、`signal_source` one-hot 3 维）。无信号 bar 直接步进（保持前一仓位，不调用 RL）；有信号 bar 调用 RL 输出 `position_scale`。 |
+| P0 | [ ] | **T-HYB-01-2** `env/spaces.py` — 新增 `signal_dim: int = 0` 字段；有信号时 `signal_dim=5`（direction, confidence, is_long, is_short, is_skip）追加到 context；调整 `context_dim` 自动推导，兼容无信号模式（`signal_dim=0`）。 |
+| P0 | [ ] | **T-HYB-01-3** `env/market_env.py` — 修改 `_get_observation()`：在 context 末尾追加信号向量（`signal_dim > 0`）；修改 action 解读：`action["position"]` 被解释为 `position_scale ∈ [-1,1]`（负值=平/反向，0=跳过，正值=放大）——用 `tanh` 激活，乘以 `signal_direction` 得到 final_position。 |
+| P1 | [ ] | **T-HYB-01-4** 预计算训练期信号序列：`scripts/precompute_training_signals.py` — 对训练数据集时间段回放规则引擎（复用 `collect_signal_labels.py` 逻辑），输出 Parquet `{ts, symbol, direction, confidence, source, regime}`，供 MarketEnv 按 ts 索引查找。 |
+
+**验收**：`MarketEnv(signal_mode=True)` 构造后，在 5000 步烟雾测试中：① 无信号 bar 比例 ≈ 实际信号率（约 2–5%）；② obs.shape 与 `observation_space.shape` 一致；③ 无 gym 接口异常。
+
+---
+
+### Story: RL 仓位优化器（`ST-HYB-02`）
+
+**I want** RL 输出单一标量 `position_scale ∈ [0,1]`，在给定方向下控制仓位强度 **so that** 动作空间从 3D 降至 1D，学习目标更聚焦。
+
+| 优先级 | 状态 | Task |
+|--------|------|------|
+| P0 | [ ] | **T-HYB-02-1** `agent/networks.py` — 新增 `HybridPolicyNet`：仅输出 `position_scale`（单头 Beta(α,β) 分布，保证输出 ∈ [0,1]）；去除 `risk_budget` head；context_dim 适配 `signal_dim`；共享 Transformer backbone（d_model=128, n_layers=2, n_heads=4, lookback=10）与当前保持一致，避免重新调架构参数。 |
+| P0 | [ ] | **T-HYB-02-2** `agent/meta_controller.py` — 新增 `HybridMetaController`（或给 `MetaController` 增加 `hybrid_mode=True` 开关）：`act()` 只返回 `{"position_scale": float}`；`log_prob()` 仅对 Beta 分布计算；`_predict()` 中去除对 `risk_budget` action 的所有引用。 |
+| P0 | [ ] | **T-HYB-02-3** `env/reward.py` — 检查 RewardEngine 在 hybrid 模式下是否可直接复用：确认 `did_trade` 和 `trade_cost` 语义正确（现有实现兼容）；如需调整 `churn_penalty` 权重（信号稀少时不该重惩），在 `MarketEnvConfig` 暴露 `signal_mode_trade_penalty`。 |
+| P1 | [ ] | **T-HYB-02-4** `scripts/train_rl_agent.py` — 增加 `--hybrid-mode` CLI flag；启用时：加载预计算信号 Parquet，构造 `MarketEnv(signal_mode=True)`，实例化 `HybridMetaController`；其余超参数（cost-profile, n-epochs, eval-episodes, timesteps）不变。 |
+| P1 | [ ] | **T-HYB-02-5** 烟雾测试：`uv run python scripts/train_rl_agent.py --symbols ETH/USDT --exchange binance --cost-profile conservative --hybrid-mode --timesteps 5000 --seed 42 --checkpoint-dir ./checkpoints/hybrid_smoke`。验收：无 Python 异常，产出 `final_agent.pt`，obs_dim 正确。 |
+
+**验收**：烟雾测试通过；action shape=(1,)；`observation_space.shape` 与 `obs.shape` 一致（含 signal_dim=5）。
+
+---
+
+### Story: WF 评估与 Baseline 对比（`ST-HYB-03`）
+
+**I want** 在与 v10 r1 相同协议下评估 hybrid RL **so that** 结论可与最佳 pure-RL baseline（-0.06 Sharpe）直接比较。
+
+| 优先级 | 状态 | Task |
+|--------|------|------|
+| P0 | [ ] | **T-HYB-03-1** 训练（conservative，200k steps）：`uv run python scripts/train_rl_agent.py --symbols ETH/USDT --exchange binance --cost-profile conservative --hybrid-mode --timesteps 200000 --n-epochs 8 --eval-episodes 15 --seed 42 --checkpoint-dir ./checkpoints/hybrid_v1_r1`。 |
+| P0 | [ ] | **T-HYB-03-2** WF 评估：`uv run python scripts/eval_walkforward.py --checkpoint ./checkpoints/hybrid_v1_r1/best_agent.pt --symbols ETH/USDT --exchange binance --n-folds 20 --test-days 7 --cost-profile conservative --output /tmp/hybrid_v1_r1.eval.json`。门禁对比：WF Mean Sharpe > -0.06（v10 r1）。 |
+| P0 | [ ] | **T-HYB-03-3** 若通过门禁（Sharpe > 0 或显著优于 -0.06），更新 `docs/baselines.md` 为 `hybrid_v1_r1`；否则记录失败原因与下一步假设（调 `position_scale` 分布先验 / 加 hold_bars 输出 / 放松摩擦）。 |
+| P1 | [ ] | **T-HYB-03-4** 超参数微调（若 WF 在 [-0.1, 0.0) 范围）：尝试 `--trade-penalty 0.005`（信号驱动时 churn 已被规则引擎控制，可放宽）+ `--sharpe-terminal 1.0`（对齐 WF 目标），重跑 WF 对比。 |
+
+**门禁**：WF Mean Sharpe ≥ 0.0 且无 Python 异常 → 标记 hybrid_v1 为当前最佳，启动 shadow。WF Sharpe 在 (-0.2, 0) → 超参微调继续。WF Sharpe < -0.5 → 架构复盘（obs 设计/信号预计算偏差/分布选择）。
+
+---
+
+### Story: 生产推理适配（`ST-HYB-04`）
+
+**I want** RLTradingLoop 在 hybrid 模式下能实时接收规则引擎信号并调用 RL 仓位优化器 **so that** hybrid 架构可进入 shadow 对照。
+
+| 优先级 | 状态 | Task |
+|--------|------|------|
+| P2 | [ ] | **T-HYB-04-1** `trader/rl_loop.py` — 新增 `_on_signal()` 回调（由 SignalService 注入）：接收 `SignalEvent`，构造 signal_vec（direction/confidence/source），传入 `_build_observation()` 并调用 RL；非信号 bar 的 `_on_candle()` 仍跑但不调用 RL（仅更新 feature 缓存）。 |
+| P2 | [ ] | **T-HYB-04-2** 集成测试（shadow mode）：开启 `shadow_mode=True`，回放最近 30 天历史，对比「规则引擎固定仓位」vs「RL 仓位缩放后」的 Sharpe/MaxDD，确认无 obs_dim 不匹配错误。 |
 
 ---
 

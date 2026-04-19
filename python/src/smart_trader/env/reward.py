@@ -18,9 +18,9 @@ import numpy as np
 
 @dataclass
 class RewardConfig:
-    pnl_scale: float = 50.0          # scale raw step return to useful magnitude
-    loss_aversion: float = 1.1       # multiply penalty for negative returns (asymmetric)
-    beta: float = 1.5                # drawdown penalty weight (per-step)
+    pnl_scale: float = 40.0          # scale raw step return to useful magnitude
+    loss_aversion: float = 1.3       # multiply penalty for negative returns (asymmetric)
+    beta: float = 2.0                # drawdown penalty weight (per-step)
     gamma: float = 0.2               # trading cost penalty weight
     trade_penalty: float = 0.01      # flat penalty per trade (discourages churn)
 
