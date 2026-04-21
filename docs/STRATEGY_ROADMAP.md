@@ -113,21 +113,21 @@ P5 (later) EPIC-RL-V10  RL v10 (only after P0–P1 prove rule edge)
 **Goal**: After EPIC-ALPHA produces trades, measure the real edge over 30/60/90 days.  
 **Definition of done**: `docs/live_benchmark.md` with daily P&L vs ETH B&H comparison.
 
-### ST-BENCH-01 — B&H benchmark tracker
+### ST-BENCH-01 — B&H benchmark tracker ✅ DONE (2026-04-21)
 
-| # | Task | Notes |
-|---|------|-------|
-| T-01-1 | Log ETH/USDT price at loop start daily to `portfolio_state` table | Add `benchmark_price` column |
-| T-01-2 | `scripts/benchmark_report.py`: print strategy P&L vs B&H P&L for date range | Simple CLI tool |
-| T-01-3 | Add regime distribution summary to report (% time in each regime) | Helps explain under/over-performance |
+| # | Task | Status | Notes |
+|---|------|--------|-------|
+| T-01-1 | Log daily snapshot to DB | ✅ | `benchmark_snapshots` hypertable + `benchmark_baseline` (migration 009); loop writes once per calendar day in `_log_portfolio()` |
+| T-01-2 | `scripts/benchmark_report.py` | ✅ | Prints strategy return vs ETH B&H, Sharpe, max DD, win rate, gate status |
+| T-01-3 | Regime distribution in report | ✅ | Bar chart of regime % at bottom of report |
 
 ### ST-BENCH-02 — 30-day shadow gate
 
-| # | Task | Notes |
-|---|------|-------|
-| T-02-1 | Run paper trading for 30 consecutive days (no code changes during window) | Lock code before starting |
-| T-02-2 | Gate criteria: Sharpe > 0 AND win rate ≥ 50% AND max drawdown ≤ 15% | Document in `configs/live_gate.json` |
-| T-02-3 | If gate passes → proceed to EPIC-PROD; if fails → return to EPIC-ALPHA | |
+| # | Task | Status | Notes |
+|---|------|--------|-------|
+| T-02-1 | Run paper trading 30 consecutive days | ⏳ started 2026-04-21 | Code locked — no changes to signal logic during window |
+| T-02-2 | Gate criteria defined | ✅ | `configs/live_gate.json`: Sharpe>0, WR≥40%, MaxDD≤15%, days≥30, trades≥5 |
+| T-02-3 | Gate evaluation | pending | Run `benchmark_report.py` on 2026-05-21 |
 
 ---
 

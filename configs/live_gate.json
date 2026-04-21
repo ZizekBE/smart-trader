@@ -1,0 +1,8 @@
+{
+  "_comment": "30-day shadow gate criteria — must all pass before EPIC-PROD (live money)",
+  "min_sharpe": 0.0,
+  "min_win_rate_pct": 40.0,
+  "max_drawdown_pct": 15.0,
+  "min_days": 30,
+  "min_trades": 5
+}

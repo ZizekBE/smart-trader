@@ -20,6 +20,7 @@ import structlog
 from smart_trader.core.settings import get_settings
 from smart_trader.data.ingestion.candle_service import CandleIngestionService
 from smart_trader.data.ingestion.gateio_client import GateIOClient
+from smart_trader.data.storage.benchmark_repo import BenchmarkRepository
 from smart_trader.data.storage.candle_repo import CandleRepository
 from smart_trader.data.storage.database import get_session_factory
 from smart_trader.execution.engine import ExecutionEngine
@@ -125,6 +126,7 @@ class HybridLoop:
         self._last_day: Optional[date] = None
         self._last_regime: Optional[MarketRegime] = None
         self._trend_eng = TrendEngine()
+        self._benchmark_day: Optional[date] = None
 
     # ── public ────────────────────────────────────────────────────────────────
 
@@ -275,6 +277,35 @@ class HybridLoop:
             daily_pnl=round(p.daily_pnl, 4),
             drawdown=f"{p.drawdown_pct:.2%}",
         )
+
+        # ── daily benchmark snapshot (once per calendar day) ──────────────
+        today = datetime.now(timezone.utc).date()
+        if self._benchmark_day != today:
+            regime_str = str(self._last_regime) if self._last_regime else None
+            try:
+                now = datetime.now(timezone.utc)
+                async with self._factory() as session:
+                    repo = BenchmarkRepository(session)
+                    await repo.ensure_baseline(
+                        symbol=self._symbol,
+                        start_price=price,
+                        start_capital=self._initial_cash,
+                        start_ts=now,
+                    )
+                    await repo.upsert_snapshot(
+                        ts=now,
+                        symbol=self._symbol,
+                        portfolio_total=p.total_value,
+                        cash=p.cash,
+                        bh_price=price,
+                        regime=regime_str,
+                        positions=len(p.open_positions),
+                    )
+                self._benchmark_day = today
+                self._log.info("benchmark_snapshot_saved", date=str(today),
+                               total=round(p.total_value, 2), bh_price=price)
+            except Exception as exc:
+                self._log.warning("benchmark_snapshot_failed", error=str(exc))
 
     async def _sleep_until_next_candle(self, tick_start: datetime) -> None:
         tf_seconds = {
