@@ -203,6 +203,46 @@ def detect_ema_bounce(df: pd.DataFrame) -> DetectorResult:
     return None
 
 
+def detect_ema_crossover(df: pd.DataFrame) -> DetectorResult:
+    """EMA 9/21 crossover detector — fires on the bar a crossover occurs.
+
+    Long:  EMA9 crosses above EMA21 (bullish momentum shift).
+    Short: EMA9 crosses below EMA21 (bearish momentum shift).
+    Score is proportional to the gap size relative to recent ATR, so
+    wider crosses score higher than marginal ones.
+    Requires at least 30 bars.
+    """
+    if len(df) < 30:
+        return None
+    close = df["close"].astype(float)
+    e9    = _ema(close, 9)
+    e21   = _ema(close, 21)
+
+    curr_diff = e9.iloc[-1]  - e21.iloc[-1]
+    prev_diff = e9.iloc[-2]  - e21.iloc[-2]
+
+    if math.isnan(curr_diff) or math.isnan(prev_diff):
+        return None
+
+    # no crossover
+    if (curr_diff > 0) == (prev_diff > 0):
+        return None
+
+    # ATR-normalised gap size as score
+    high  = df["high"].astype(float)
+    low   = df["low"].astype(float)
+    atr   = (high - low).rolling(14).mean().iloc[-1]
+    gap   = abs(curr_diff)
+    score = min(1.0, gap / (atr * 0.5 + 1e-9))
+    if score < 0.1:
+        return None
+
+    if curr_diff > 0:   # bullish
+        return "long",  score, {"ema9": e9.iloc[-1], "ema21": e21.iloc[-1], "gap": gap}
+    else:               # bearish
+        return "short", score, {"ema9": e9.iloc[-1], "ema21": e21.iloc[-1], "gap": gap}
+
+
 # ── volume spike helper (used by SignalEngine, not a standalone detector) ──
 
 def volume_spike(df: pd.DataFrame, threshold: float = 2.0) -> bool:

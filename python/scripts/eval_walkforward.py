@@ -76,11 +76,18 @@ def parse_args() -> argparse.Namespace:
         default="default",
         help="Simulator fees/slippage/depth for WF folds (conservative = higher friction).",
     )
+    p.add_argument(
+        "--signal-parquet", default=None,
+        help="Path to precomputed signal Parquet (hybrid mode only; auto-detected if omitted).",
+    )
     return p.parse_args()
 
 
 async def load_all_data(
-    symbols: list[str], exchange: str, load_funding_rates: bool = False,
+    symbols: list[str],
+    exchange: str,
+    load_funding_rates: bool = False,
+    timeframes: tuple[str, ...] = ("1m", "1h", "4h"),
 ) -> tuple[dict[str, dict[str, pd.DataFrame]], dict[str, pd.Series]]:
     """Load candle data (and optionally funding rates) for multiple symbols."""
     from sqlalchemy import text
@@ -93,7 +100,7 @@ async def load_all_data(
 
     for symbol in symbols:
         data: dict[str, pd.DataFrame] = {}
-        for tf in ("1m", "1h", "4h"):
+        for tf in timeframes:
             sql = text("""
                 SELECT time, open::double precision, high::double precision,
                        low::double precision, close::double precision,
@@ -191,6 +198,10 @@ def evaluate_fold(
     sim_config: SimulatorConfig | None = None,
     microstructure_dim: int = 0,
     funding_rates: dict[str, pd.Series] | None = None,
+    signal_mode: bool = False,
+    signal_data: dict | None = None,
+    signal_dim: int = 0,
+    regime_dim: int = 0,
 ) -> dict:
     """Run the agent in deterministic mode on a data slice."""
     from smart_trader.data.features.engine import FeatureConfig, compute_features
@@ -207,11 +218,22 @@ def evaluate_fold(
         features_per_tf=features_per_tf,
         lookback=lookback,
         microstructure_dim=microstructure_dim,
+        signal_dim=signal_dim,
+        regime_dim=regime_dim,
     )
-    primary_tf = "1m" if "1m" in data_slice else list(data_slice.keys())[0]
+    # Hybrid mode uses 1h as primary TF (signals are at 1h granularity)
+    if signal_mode:
+        primary_tf = "1h" if "1h" in data_slice else list(data_slice.keys())[0]
+    else:
+        primary_tf = "1m" if "1m" in data_slice else list(data_slice.keys())[0]
     max_bars = len(data_slice[primary_tf]) - 1
 
     sc = sim_config if sim_config is not None else SimulatorConfig()
+    # data= path uses "_default" as the symbol key internally; remap signal_data accordingly
+    env_signal_data: dict | None = None
+    if signal_mode and signal_data is not None:
+        combined = pd.concat(list(signal_data.values())).sort_index()
+        env_signal_data = {"_default": combined}
     env_config = MarketEnvConfig(
         data=data_slice,
         primary_tf=primary_tf,
@@ -221,6 +243,8 @@ def evaluate_fold(
         reward_config=RewardConfig(),
         sim_config=sc,
         funding_rates=funding_rates or None,
+        signal_mode=signal_mode,
+        signal_data=env_signal_data,
     )
 
     env = MarketEnv(env_config)
@@ -257,43 +281,56 @@ def _run_symbol_folds(
     sim_config: SimulatorConfig | None = None,
     microstructure_dim: int = 0,
     funding_rates: dict[str, pd.Series] | None = None,
+    signal_mode: bool = False,
+    signal_data: dict | None = None,
+    signal_dim: int = 0,
+    regime_dim: int = 0,
 ) -> list[dict]:
     """Walk-forward folds for a single symbol."""
     from smart_trader.data.features.engine import FeatureConfig, compute_features
     from smart_trader.env.spaces import SpaceConfig
 
-    sample_feats = compute_features(data["1m"].head(50), FeatureConfig(), prefix="x_")
+    # Primary TF determines fold slicing resolution
+    primary_tf = "1h" if signal_mode else "1m"
+    if primary_tf not in data:
+        primary_tf = list(data.keys())[0]
+
+    sample_feats = compute_features(data[primary_tf].head(50), FeatureConfig(), prefix="x_")
     features_per_tf = len(sample_feats.columns)
-    space_cfg = SpaceConfig(n_timeframes=len(data), features_per_tf=features_per_tf,
-                            lookback=lookback, microstructure_dim=microstructure_dim)
+    space_cfg = SpaceConfig(
+        n_timeframes=len(data), features_per_tf=features_per_tf,
+        lookback=lookback, microstructure_dim=microstructure_dim,
+        signal_dim=signal_dim, regime_dim=regime_dim,
+    )
     obs_dim = space_cfg.lookback * space_cfg.market_dim + space_cfg.context_dim
 
-    bars_per_day = 24 * 60
+    bars_per_day = 24 if signal_mode else 24 * 60
     test_bars = args.test_days * bars_per_day
-    total_1m = len(data["1m"])
+    total_primary = len(data[primary_tf])
     results = []
 
     for fold_idx in range(args.n_folds):
-        end_idx = total_1m - fold_idx * test_bars
+        end_idx = total_primary - fold_idx * test_bars
         start_idx = end_idx - test_bars
-        if start_idx < 200:
+        if start_idx < 50:
             break
 
         fold_data: dict[str, pd.DataFrame] = {}
         t_start_fold: pd.Timestamp | None = None
         t_end_fold: pd.Timestamp | None = None
-        for tf, df in data.items():
-            if tf == "1m":
-                fold_data[tf] = df.iloc[start_idx:end_idx]
-                t_start_fold = df.index[start_idx]
-                t_end_fold = df.index[min(end_idx, len(df) - 1)]
-            else:
-                t_start = data["1m"].index[start_idx]
-                t_end = data["1m"].index[min(end_idx, len(data["1m"]) - 1)]
-                mask = (df.index >= t_start) & (df.index <= t_end)
-                fold_data[tf] = df.loc[mask]
 
-        if len(fold_data.get("1m", pd.DataFrame())) < 1000:
+        prim_df = data[primary_tf]
+        fold_data[primary_tf] = prim_df.iloc[start_idx:end_idx]
+        t_start_fold = prim_df.index[start_idx]
+        t_end_fold = prim_df.index[min(end_idx, len(prim_df) - 1)]
+
+        for tf, df in data.items():
+            if tf == primary_tf:
+                continue
+            mask = (df.index >= t_start_fold) & (df.index <= t_end_fold)
+            fold_data[tf] = df.loc[mask]
+
+        if len(fold_data.get(primary_tf, pd.DataFrame())) < 10:
             break
 
         fold_fr: dict[str, pd.Series] | None = None
@@ -303,17 +340,27 @@ def _run_symbol_folds(
                 mask = (fr_series.index >= t_start_fold) & (fr_series.index <= t_end_fold)
                 fold_fr[fr_sym] = fr_series.loc[mask]
 
+        # Slice signal_data to fold window
+        fold_signal: dict | None = None
+        if signal_mode and signal_data is not None:
+            fold_signal = {}
+            for sig_sym, sig_df in signal_data.items():
+                mask = (sig_df.index >= t_start_fold) & (sig_df.index <= t_end_fold)
+                fold_signal[sig_sym] = sig_df.loc[mask]
+
         t0 = time.monotonic()
         result = evaluate_fold(
             agent, fold_data, fold_idx, obs_dim, lookback=lookback, sim_config=sim_config,
             microstructure_dim=microstructure_dim, funding_rates=fold_fr,
+            signal_mode=signal_mode, signal_data=fold_signal,
+            signal_dim=signal_dim, regime_dim=regime_dim,
         )
         result["elapsed"] = time.monotonic() - t0
         result["symbol"] = symbol
         results.append(result)
 
-        period_start = fold_data["1m"].index[0].strftime("%m/%d")
-        period_end = fold_data["1m"].index[-1].strftime("%m/%d")
+        period_start = fold_data[primary_tf].index[0].strftime("%m/%d")
+        period_end = fold_data[primary_tf].index[-1].strftime("%m/%d")
         period = f"{period_start} - {period_end}"
         tr = result.get("total_return", 0)
         sh = result.get("sharpe", 0)
@@ -381,6 +428,10 @@ def run_walkforward_eval(
     sim_config: SimulatorConfig | None = None,
     microstructure_dim: int = 0,
     funding_rates: dict[str, pd.Series] | None = None,
+    signal_mode: bool = False,
+    signal_data: dict | None = None,
+    signal_dim: int = 0,
+    regime_dim: int = 0,
 ) -> list[dict]:
     """Run all symbols × folds; optionally suppress per-fold lines (for sweeps)."""
     all_results: list[dict] = []
@@ -389,6 +440,8 @@ def run_walkforward_eval(
             agent, sym_data, sym, args,
             verbose=verbose, lookback=lookback, sim_config=sim_config,
             microstructure_dim=microstructure_dim, funding_rates=funding_rates,
+            signal_mode=signal_mode, signal_data=signal_data,
+            signal_dim=signal_dim, regime_dim=regime_dim,
         )
         all_results.extend(results)
     return all_results
@@ -397,24 +450,59 @@ def run_walkforward_eval(
 def main() -> None:
     args = parse_args()
 
-    from smart_trader.agent.meta_controller import MetaController
+    from smart_trader.agent.meta_controller import HybridMetaController, MetaController
     from smart_trader.data.features.engine import FeatureConfig, compute_features
     from smart_trader.env.spaces import SpaceConfig
 
-    # Probe checkpoint to detect if microstructure was used during training
+    # Probe checkpoint for hybrid mode and microstructure flags
     ckpt_path_probe = Path(args.checkpoint)
     raw_ckpt = torch.load(ckpt_path_probe, map_location="cpu", weights_only=False)
-    saved_obs_probe = int((raw_ckpt.get("config") or {}).get("obs_dim", 0))
-    need_fr = saved_obs_probe > 0  # will refine after computing base obs_dim
+    ckpt_cfg = raw_ckpt.get("config") or {}
+    saved_obs_probe = int(ckpt_cfg.get("obs_dim", 0))
+    hybrid_mode: bool = bool(ckpt_cfg.get("hybrid_mode", False))
+    need_fr = saved_obs_probe > 0
 
+    log.info("checkpoint_mode", hybrid_mode=hybrid_mode)
+
+    # Hybrid uses 1h+4h only; pure RL uses 1m+1h+4h
+    load_tfs = ("1h", "4h") if hybrid_mode else ("1m", "1h", "4h")
     all_data, funding_rates = asyncio.run(
-        load_all_data(args.symbols, args.exchange, load_funding_rates=need_fr)
+        load_all_data(args.symbols, args.exchange, load_funding_rates=need_fr,
+                      timeframes=load_tfs)
     )
-    all_data = {sym: d for sym, d in all_data.items() if "1m" in d}
+
+    primary_tf_check = "1h" if hybrid_mode else "1m"
+    all_data = {sym: d for sym, d in all_data.items() if primary_tf_check in d}
 
     if not all_data:
         log.error("no_data_available")
         return
+
+    # Load signal Parquet for hybrid mode
+    signal_data: dict | None = None
+    signal_dim: int = 0
+    if hybrid_mode:
+        signal_dim = 5
+        sig_path: Path | None = None
+        if args.signal_parquet:
+            sig_path = Path(args.signal_parquet)
+        else:
+            sym_tag = "_".join(s.replace("/", "") for s in args.symbols)
+            sig_path = ROOT / "data" / "hybrid_signals" / f"signals_{sym_tag}_{args.exchange}.parquet"
+        if sig_path.exists():
+            sig_df = pd.read_parquet(sig_path)
+            if not isinstance(sig_df.index, pd.DatetimeIndex):
+                sig_df.index = pd.to_datetime(sig_df.index, utc=True)
+            if sig_df.index.tz is None:
+                sig_df.index = sig_df.index.tz_localize("UTC")
+            signal_data = {}
+            for sym in args.symbols:
+                sym_mask = sig_df.get("symbol") == sym if "symbol" in sig_df.columns else pd.Series(True, index=sig_df.index)
+                signal_data[sym] = sig_df.loc[sym_mask, ["direction", "confidence"]]
+            log.info("signal_parquet_loaded", path=str(sig_path), rows=len(sig_df))
+        else:
+            log.warning("signal_parquet_missing", path=str(sig_path),
+                        note="hybrid folds will have no signals — all direction=0")
 
     ckpt_path = Path(args.checkpoint)
     arch = resolve_arch_from_checkpoint(ckpt_path, args.device, args)
@@ -422,15 +510,19 @@ def main() -> None:
     context_dim = arch["context_dim"]
 
     first_data = list(all_data.values())[0]
-    sample_feats = compute_features(first_data["1m"].head(50), FeatureConfig(), prefix="x_")
+    sample_tf = "1h" if hybrid_mode else "1m"
+    sample_feats = compute_features(first_data[sample_tf].head(50), FeatureConfig(), prefix="x_")
     features_per_tf = len(sample_feats.columns)
-    # Compute base obs_dim (no microstructure) then detect extra dims from checkpoint
-    space_cfg_base = SpaceConfig(n_timeframes=len(first_data), features_per_tf=features_per_tf,
-                                 lookback=lookback)
+
+    space_cfg_base = SpaceConfig(
+        n_timeframes=len(first_data), features_per_tf=features_per_tf, lookback=lookback,
+        signal_dim=signal_dim,
+    )
     base_obs_dim = space_cfg_base.lookback * space_cfg_base.market_dim + space_cfg_base.context_dim
 
     saved_obs = arch["saved_obs"]
-    microstructure_dim = max(0, (saved_obs - base_obs_dim)) if saved_obs is not None else 0
+    # Extra dims beyond (market + signal context) go to microstructure
+    microstructure_dim = max(0, saved_obs - base_obs_dim) if saved_obs is not None else 0
     obs_dim = base_obs_dim + microstructure_dim
 
     if microstructure_dim > 0:
@@ -439,7 +531,8 @@ def main() -> None:
     elif saved_obs is not None and saved_obs != base_obs_dim:
         log.warning("obs_dim_mismatch", from_data=base_obs_dim, from_checkpoint=saved_obs)
 
-    agent = MetaController(
+    AgentClass = HybridMetaController if hybrid_mode else MetaController
+    agent = AgentClass(
         obs_dim=obs_dim,
         d_model=arch["d_model"],
         n_heads=arch["n_heads"],
@@ -461,15 +554,16 @@ def main() -> None:
             )
         raise
     log.info("agent_loaded", checkpoint=args.checkpoint, obs_dim=obs_dim,
-             symbols=list(all_data.keys()))
+             hybrid_mode=hybrid_mode, symbols=list(all_data.keys()))
 
     sim_config = build_sim_config(args.cost_profile)
     sim_meta = sim_config_to_meta(sim_config)
     log.info("wf_simulator", cost_profile=args.cost_profile, **sim_meta)
 
+    mode_label = "Hybrid" if hybrid_mode else "Pure-RL"
     print(f"\n{'═'*80}")
     n_sym = len(all_data)
-    print(f"  Walk-Forward Evaluation — {n_sym} symbols × {args.n_folds} folds × {args.test_days}d")
+    print(f"  Walk-Forward Evaluation [{mode_label}] — {n_sym} symbols × {args.n_folds} folds × {args.test_days}d")
     dp = float(sim_config.depth_profile_usd)
     print(
         f"  Cost profile: {args.cost_profile}  |  taker_fee={sim_config.taker_fee:.5f}  "
@@ -485,6 +579,9 @@ def main() -> None:
         agent, all_data, args, verbose=True, lookback=lookback, sim_config=sim_config,
         microstructure_dim=microstructure_dim,
         funding_rates=funding_rates if microstructure_dim > 0 else None,
+        signal_mode=hybrid_mode,
+        signal_data=signal_data,
+        signal_dim=signal_dim,
     )
 
     print(f"  {'─'*72}")
@@ -522,6 +619,7 @@ def main() -> None:
             "n_folds": args.n_folds,
             "test_days": args.test_days,
             "cost_profile": args.cost_profile,
+            "hybrid_mode": hybrid_mode,
             "simulator": sim_meta,
         }
         save_eval_results(all_results, agg, out_path, meta=wf_meta)

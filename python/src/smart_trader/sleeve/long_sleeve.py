@@ -17,9 +17,11 @@ import pandas as pd
 
 from smart_trader.risk.manager import RiskManager
 from smart_trader.risk.models import Portfolio, RiskDecision
+from smart_trader.strategy.adaptive_params import RegimeParamAdapter
 from smart_trader.strategy.signals.engine import SignalEngine
 from smart_trader.strategy.trend.engine import TrendEngine
 from smart_trader.strategy.volatility.analyzer import VolatilityAnalyzer
+from smart_trader.sleeve.capital import confidence_to_size_scale
 from smart_trader.sleeve.models import SleeveDecision, SleeveId, SleeveState
 
 log = structlog.get_logger(__name__)
@@ -50,9 +52,10 @@ class CoreSleeve:
         self._state        = SleeveState()
         self._log          = log.bind(sleeve="core", symbol=symbol)
 
-        self._trend  = TrendEngine()
-        self._signal = SignalEngine(version=strategy_version)
-        self._vol    = VolatilityAnalyzer()
+        self._trend   = TrendEngine()
+        self._signal  = SignalEngine(version=strategy_version)
+        self._vol     = VolatilityAnalyzer()
+        self._regime_adapter = RegimeParamAdapter()
         self._risk   = RiskManager(
             min_confidence=min_confidence,
             max_position_pct=max_position_pct,
@@ -143,7 +146,11 @@ class CoreSleeve:
             return SleeveDecision(SleeveId.CORE, best, None, portfolio, meta)
 
         # ── risk evaluation ───────────────────────────────────────────────
-        decision = self._risk.evaluate(best, portfolio, price, sig_df, trend_df)
+        regime_params = self._regime_adapter.get(trend_state, vol_state)
+        size_scale = confidence_to_size_scale(best.confidence) * regime_params.pos_cap_mult
+        meta["pos_cap_mult"] = regime_params.pos_cap_mult
+        decision = self._risk.evaluate(best, portfolio, price, sig_df, trend_df,
+                                       size_scale=size_scale)
         if not decision.approved:
             meta["decision"] = "risk_rejected"
             meta["decision_reason"] = "; ".join(decision.reasons)
@@ -155,4 +162,5 @@ class CoreSleeve:
         meta["decision"]         = "enter"
         meta["entry_side"]       = entry_side
         meta["entry_confidence"] = round(best.confidence, 4)
+        meta["size_scale"]       = size_scale
         return SleeveDecision(SleeveId.CORE, best, decision, portfolio, meta)

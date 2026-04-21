@@ -10,6 +10,7 @@ Capital is partitioned via CapitalAllocator (60% core / 30% tactical / 10% reser
 from __future__ import annotations
 
 import asyncio
+import subprocess
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
@@ -26,6 +27,8 @@ from smart_trader.sleeve.capital import CapitalAllocator
 from smart_trader.sleeve.long_sleeve import CoreSleeve
 from smart_trader.sleeve.manager import SleeveManager
 from smart_trader.sleeve.short_sleeve import TacticalSleeve
+from smart_trader.strategy.trend.engine import TrendEngine
+from smart_trader.strategy.trend.regime import MarketRegime
 
 log = structlog.get_logger(__name__)
 
@@ -40,6 +43,8 @@ EXIT_CHECK_INTERVAL = 300   # seconds between mid-cycle exit checks
 # How many SHORT_TF ticks before running the core sleeve
 # 1h × 4 = 4h boundary
 _CORE_EVERY_N_TICKS = 4
+
+_NOTIFY_REGIMES = {MarketRegime.BULL_TRENDING, MarketRegime.BEAR_TRENDING, MarketRegime.ACCUMULATION}
 
 
 class HybridLoop:
@@ -118,6 +123,8 @@ class HybridLoop:
 
         self._tick_count: int       = 0
         self._last_day: Optional[date] = None
+        self._last_regime: Optional[MarketRegime] = None
+        self._trend_eng = TrendEngine()
 
     # ── public ────────────────────────────────────────────────────────────────
 
@@ -201,6 +208,9 @@ class HybridLoop:
         trend_df = await self._load_df(TREND_TF, limit=300)
         mid_df   = await self._load_df(s.hybrid_short_mid_tf, limit=300)
 
+        # ── regime notification ────────────────────────────────────────────
+        self._check_regime_notify(trend_df)
+
         # ── exits ──────────────────────────────────────────────────────────
         await self._manager.tick_exits(price)
 
@@ -230,6 +240,27 @@ class HybridLoop:
         df = pd.DataFrame(rows).set_index("time")
         df.index = pd.to_datetime(df.index, utc=True)
         return df
+
+    def _check_regime_notify(self, trend_df: pd.DataFrame) -> None:
+        if trend_df.empty:
+            return
+        try:
+            state = self._trend_eng.analyse(trend_df, self._symbol, TREND_TF)
+        except Exception:
+            return
+        regime = state.regime
+        self._log.info("regime_check", regime=str(regime))
+        if regime in _NOTIFY_REGIMES and regime != self._last_regime:
+            msg = f"smart-trader: {self._symbol} regime → {regime}"
+            self._log.info("regime_changed_notify", regime=str(regime))
+            try:
+                subprocess.Popen([
+                    "osascript", "-e",
+                    f'display notification "{msg}" with title "smart-trader" sound name "Ping"',
+                ])
+            except Exception as exc:
+                self._log.warning("notify_failed", error=str(exc))
+        self._last_regime = regime
 
     async def _log_portfolio(self, price: float) -> None:
         p = await self._engine.get_portfolio(

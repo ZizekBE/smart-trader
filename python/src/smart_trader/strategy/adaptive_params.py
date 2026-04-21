@@ -49,11 +49,13 @@ class AdaptiveParams:
     min_votes:      int     # Phase-1.2 multi-source gate
     skip:           bool    # if True, skip the entire tick
     label:          str     # human-readable description for logging
+    pos_cap_mult:   float = 1.0  # ST-ALPHA-03: regime-adaptive position cap multiplier
 
     def __str__(self) -> str:
         return (
             f"{self.label}  conf≥{self.min_confidence:.2f}  "
-            f"kelly×{self.kelly_scale:.1f}  votes≥{self.min_votes}"
+            f"kelly×{self.kelly_scale:.1f}  votes≥{self.min_votes}  "
+            f"pos_cap×{self.pos_cap_mult:.1f}"
             f"{'  SKIP' if self.skip else ''}"
         )
 
@@ -93,41 +95,41 @@ _CRISIS = "crisis"
 
 TREND_VOL_PARAMS: dict[tuple[str, str], AdaptiveParams] = {
 
-    # ── BULL_TRENDING ─────────────────────────────────────────────────────────
-    (MarketRegime.BULL_TRENDING, _LOW):    AdaptiveParams(0.55, 1.0, 1, False, "bull_trend/low_vol"),
-    (MarketRegime.BULL_TRENDING, _MED):   AdaptiveParams(0.58, 1.0, 1, False, "bull_trend/med_vol"),
-    (MarketRegime.BULL_TRENDING, _HIGH):  AdaptiveParams(0.65, 0.7, 1, False, "bull_trend/high_vol"),
-    (MarketRegime.BULL_TRENDING, _CRISIS):SKIP_PARAMS,
+    # ── BULL_TRENDING — full exposure, ride the trend ─────────────────────────
+    (MarketRegime.BULL_TRENDING, _LOW):    AdaptiveParams(0.55, 1.0, 1, False, "bull_trend/low_vol",  pos_cap_mult=1.0),
+    (MarketRegime.BULL_TRENDING, _MED):    AdaptiveParams(0.58, 1.0, 1, False, "bull_trend/med_vol",  pos_cap_mult=1.0),
+    (MarketRegime.BULL_TRENDING, _HIGH):   AdaptiveParams(0.65, 0.7, 1, False, "bull_trend/high_vol", pos_cap_mult=0.8),
+    (MarketRegime.BULL_TRENDING, _CRISIS): SKIP_PARAMS,
 
-    # ── BEAR_TRENDING ─────────────────────────────────────────────────────────
-    (MarketRegime.BEAR_TRENDING, _LOW):   AdaptiveParams(0.55, 1.0, 1, False, "bear_trend/low_vol"),
-    (MarketRegime.BEAR_TRENDING, _MED):   AdaptiveParams(0.58, 1.0, 1, False, "bear_trend/med_vol"),
-    (MarketRegime.BEAR_TRENDING, _HIGH):  AdaptiveParams(0.65, 0.7, 1, False, "bear_trend/high_vol"),
-    (MarketRegime.BEAR_TRENDING, _CRISIS):SKIP_PARAMS,
+    # ── BEAR_TRENDING — full short exposure, ride the downtrend ──────────────
+    (MarketRegime.BEAR_TRENDING, _LOW):    AdaptiveParams(0.55, 1.0, 1, False, "bear_trend/low_vol",  pos_cap_mult=1.0),
+    (MarketRegime.BEAR_TRENDING, _MED):    AdaptiveParams(0.58, 1.0, 1, False, "bear_trend/med_vol",  pos_cap_mult=1.0),
+    (MarketRegime.BEAR_TRENDING, _HIGH):   AdaptiveParams(0.65, 0.7, 1, False, "bear_trend/high_vol", pos_cap_mult=0.8),
+    (MarketRegime.BEAR_TRENDING, _CRISIS): SKIP_PARAMS,
 
-    # ── BULL_RANGING ──────────────────────────────────────────────────────────
-    (MarketRegime.BULL_RANGING, _LOW):    AdaptiveParams(0.62, 0.8, 2, False, "bull_range/low_vol"),
-    (MarketRegime.BULL_RANGING, _MED):    AdaptiveParams(0.65, 0.7, 2, False, "bull_range/med_vol"),
-    (MarketRegime.BULL_RANGING, _HIGH):   AdaptiveParams(0.72, 0.5, 2, False, "bull_range/high_vol"),
-    (MarketRegime.BULL_RANGING, _CRISIS): SKIP_PARAMS,
+    # ── BULL_RANGING — moderate; mean-reversion noise is high ────────────────
+    (MarketRegime.BULL_RANGING, _LOW):     AdaptiveParams(0.62, 0.8, 2, False, "bull_range/low_vol",  pos_cap_mult=0.6),
+    (MarketRegime.BULL_RANGING, _MED):     AdaptiveParams(0.65, 0.7, 2, False, "bull_range/med_vol",  pos_cap_mult=0.6),
+    (MarketRegime.BULL_RANGING, _HIGH):    AdaptiveParams(0.72, 0.5, 2, False, "bull_range/high_vol", pos_cap_mult=0.4),
+    (MarketRegime.BULL_RANGING, _CRISIS):  SKIP_PARAMS,
 
-    # ── BEAR_RANGING ──────────────────────────────────────────────────────────
-    (MarketRegime.BEAR_RANGING, _LOW):    AdaptiveParams(0.62, 0.8, 2, False, "bear_range/low_vol"),
-    (MarketRegime.BEAR_RANGING, _MED):    AdaptiveParams(0.65, 0.7, 2, False, "bear_range/med_vol"),
-    (MarketRegime.BEAR_RANGING, _HIGH):   AdaptiveParams(0.72, 0.5, 2, False, "bear_range/high_vol"),
-    (MarketRegime.BEAR_RANGING, _CRISIS): SKIP_PARAMS,
+    # ── BEAR_RANGING — moderate; allow shorts but reduce exposure ─────────────
+    (MarketRegime.BEAR_RANGING, _LOW):     AdaptiveParams(0.62, 0.8, 2, False, "bear_range/low_vol",  pos_cap_mult=0.6),
+    (MarketRegime.BEAR_RANGING, _MED):     AdaptiveParams(0.65, 0.7, 2, False, "bear_range/med_vol",  pos_cap_mult=0.6),
+    (MarketRegime.BEAR_RANGING, _HIGH):    AdaptiveParams(0.72, 0.5, 2, False, "bear_range/high_vol", pos_cap_mult=0.4),
+    (MarketRegime.BEAR_RANGING, _CRISIS):  SKIP_PARAMS,
 
-    # ── ACCUMULATION ──────────────────────────────────────────────────────────
-    (MarketRegime.ACCUMULATION, _LOW):    AdaptiveParams(0.58, 0.9, 2, False, "accumulation/low_vol"),
-    (MarketRegime.ACCUMULATION, _MED):    AdaptiveParams(0.60, 0.8, 2, False, "accumulation/med_vol"),
-    (MarketRegime.ACCUMULATION, _HIGH):   AdaptiveParams(0.68, 0.6, 2, False, "accumulation/high_vol"),
-    (MarketRegime.ACCUMULATION, _CRISIS): SKIP_PARAMS,
+    # ── ACCUMULATION — potential breakout; cautious sizing ────────────────────
+    (MarketRegime.ACCUMULATION, _LOW):     AdaptiveParams(0.58, 0.9, 2, False, "accumulation/low_vol",  pos_cap_mult=0.5),
+    (MarketRegime.ACCUMULATION, _MED):     AdaptiveParams(0.60, 0.8, 2, False, "accumulation/med_vol",  pos_cap_mult=0.5),
+    (MarketRegime.ACCUMULATION, _HIGH):    AdaptiveParams(0.68, 0.6, 2, False, "accumulation/high_vol", pos_cap_mult=0.3),
+    (MarketRegime.ACCUMULATION, _CRISIS):  SKIP_PARAMS,
 
-    # ── DISTRIBUTION — defensive ──────────────────────────────────────────────
-    (MarketRegime.DISTRIBUTION, _LOW):    AdaptiveParams(0.65, 0.5, 2, False, "distribution/low_vol"),
-    (MarketRegime.DISTRIBUTION, _MED):    AdaptiveParams(0.70, 0.5, 2, False, "distribution/med_vol"),
-    (MarketRegime.DISTRIBUTION, _HIGH):   AdaptiveParams(0.75, 0.3, 2, False, "distribution/high_vol"),
-    (MarketRegime.DISTRIBUTION, _CRISIS): SKIP_PARAMS,
+    # ── DISTRIBUTION — defensive; small size only ────────────────────────────
+    (MarketRegime.DISTRIBUTION, _LOW):     AdaptiveParams(0.65, 0.5, 2, False, "distribution/low_vol",  pos_cap_mult=0.3),
+    (MarketRegime.DISTRIBUTION, _MED):     AdaptiveParams(0.70, 0.5, 2, False, "distribution/med_vol",  pos_cap_mult=0.3),
+    (MarketRegime.DISTRIBUTION, _HIGH):    AdaptiveParams(0.75, 0.3, 2, False, "distribution/high_vol", pos_cap_mult=0.2),
+    (MarketRegime.DISTRIBUTION, _CRISIS):  SKIP_PARAMS,
 }
 
 

@@ -74,6 +74,7 @@ class PositionSizer:
         recent_candles: pd.DataFrame | None    = None,
         vol_state:      VolatilityState | None = None,
         hard_cap_pct:   float | None           = None,
+        size_scale:     float                  = 1.0,
     ) -> PositionSize:
         params = _MODE_PARAMS.get(signal.strategy_mode, _DEFAULT_PARAMS)
 
@@ -106,9 +107,9 @@ class PositionSizer:
         kelly        = _kelly_fraction(signal.confidence, rr)
         kf           = self._kelly_frac_override if self._kelly_frac_override is not None else params["kelly_frac"]
         raw_pct      = kelly * kf * kelly_scale
-        mode_cap     = params["max_pct"]
+        mode_cap      = params["max_pct"] * max(0.0, min(1.0, size_scale))
         effective_cap = min(mode_cap, hard_cap_pct) if hard_cap_pct is not None else mode_cap
-        position_pct = max(_MIN_RISK_PCT, min(effective_cap, raw_pct))
+        position_pct  = max(_MIN_RISK_PCT, min(effective_cap, raw_pct))
 
         # ── 3. Notional and dollar-risk ──────────────────────
         notional      = position_pct * portfolio.total_value

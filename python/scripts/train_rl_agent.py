@@ -293,8 +293,14 @@ def train(
     first_sym = list(datasets.keys())[0]
     first_data_full = datasets[first_sym]
 
-    # 1d is loaded for regime computation only — exclude from env timeframes
-    _ENV_TFS = ("1m", "1h", "4h")
+    # Hybrid mode uses 1h as primary TF — signals are generated at 1h granularity,
+    # so env must step at 1h to avoid 60× repetition of the same signal per hour.
+    # Pure RL mode keeps 1m as primary (finer PnL resolution).
+    if getattr(args, "hybrid_mode", False):
+        _ENV_TFS = ("1h", "4h")
+    else:
+        _ENV_TFS = ("1m", "1h", "4h")
+
     env_datasets = {
         sym: {tf: df for tf, df in tf_map.items() if tf in _ENV_TFS}
         for sym, tf_map in datasets.items()
@@ -362,7 +368,11 @@ def train(
         signal_dim=signal_dim,
     )
 
-    primary_tf = "1m" if "1m" in first_data else list(first_data.keys())[0]
+    # Hybrid: primary=1h (aligns with signal granularity); pure RL: primary=1m
+    if getattr(args, "hybrid_mode", False):
+        primary_tf = "1h" if "1h" in first_data else list(first_data.keys())[0]
+    else:
+        primary_tf = "1m" if "1m" in first_data else list(first_data.keys())[0]
     min_bars = min(len(d[primary_tf]) for d in env_datasets.values() if primary_tf in d)
     max_episode = min(args.max_episode, min_bars // 2)
     log.info("episode_config", symbols=list(datasets.keys()), primary_tf=primary_tf,

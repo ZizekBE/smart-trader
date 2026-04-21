@@ -77,6 +77,7 @@ class RiskManager:
         current_price: float,
         candles_df:    pd.DataFrame | None = None,
         long_df:       pd.DataFrame | None = None,
+        size_scale:    float               = 1.0,
     ) -> RiskDecision:
         checks: dict[str, bool] = {}
         reasons: list[str] = []
@@ -125,6 +126,7 @@ class RiskManager:
         pos = self._sizer.size(
             signal, portfolio, current_price, candles_df, vol_state,
             hard_cap_pct=self._limits._max_pos_pct,
+            size_scale=size_scale,
         )
         checks["position_size"] = pos.notional > 0
         if pos.notional <= 0:

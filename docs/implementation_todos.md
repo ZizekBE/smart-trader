@@ -407,23 +407,31 @@ EPIC-OOS (评估协议) ──► EPIC-RL (RL 硬化) ──► EPIC-RL-OPT (Bug
 
 | 优先级 | 状态 | Task |
 |--------|------|------|
-| P0 | [x] | **T-HYB-03-1** 训练启动（2026-04-19，运行中）：`uv run python scripts/train_rl_agent.py --symbols ETH/USDT --exchange binance --cost-profile conservative --hybrid-mode --signal-parquet data/hybrid_signals/signals_ETHUSDT_binance.parquet --timesteps 200000 --n-epochs 8 --eval-episodes 15 --lookback 10 --d-model 128 --n-layers 2 --seed 42 --trade-penalty 0.005 --checkpoint-dir ./checkpoints/hybrid_v1_r1`。日志：`/tmp/hybrid_v1_r1.log`。 |
-| P0 | [ ] | **T-HYB-03-2** WF 评估：`uv run python scripts/eval_walkforward.py --checkpoint ./checkpoints/hybrid_v1_r1/best_agent.pt --symbols ETH/USDT --exchange binance --n-folds 20 --test-days 7 --cost-profile conservative --output /tmp/hybrid_v1_r1.eval.json`。门禁对比：WF Mean Sharpe > -0.06（v10 r1）。 |
-| P0 | [ ] | **T-HYB-03-3** 若通过门禁（Sharpe > 0 或显著优于 -0.06），更新 `docs/baselines.md` 为 `hybrid_v1_r1`；否则记录失败原因与下一步假设（调 `position_scale` 分布先验 / 加 hold_bars 输出 / 放松摩擦）。 |
-| P1 | [ ] | **T-HYB-03-4** 超参数微调（若 WF 在 [-0.1, 0.0) 范围）：尝试 `--trade-penalty 0.005`（信号驱动时 churn 已被规则引擎控制，可放宽）+ `--sharpe-terminal 1.0`（对齐 WF 目标），重跑 WF 对比。 |
+| P0 | [x] | **T-HYB-03-1** 训练完成（2026-04-19）：200k步，best eval=-3.85（step 43,520），early stop at 69,120步。熵塌陷：Beta熵从-0.05→-0.001于14%训练处。`checkpoints/hybrid_v1_r1/best_agent.pt` |
+| P0 | [x] | **T-HYB-03-2** WF 评估完成（2026-04-19）：20×7d folds，conservative。Mean Sharpe=-1.04，Win rate=35%（7/20），Best fold=+1.42%（Sharpe 14.7），Worst=-0.74%（Sharpe -9.2）。未通过门禁（< -0.06）。结果：`/tmp/hybrid_v1_r1.eval.json` |
+| P0 | [x] | **T-HYB-03-3** 失败原因：Beta 分布熵塌陷（entropy -0.001）→ agent 在 step 14k 后已收敛到固定 scale≈0.05；以低 scale 执行信号时，手续费摩擦（conservative）远超收益。下一步假设：(1) 提高 `--entropy-coef 0.05`（当前 0.02）延迟熵塌陷；(2) 更宽线性 decay（end 0.01）；(3) `--trade-penalty 0.001` 降低负向梯度以保留探索。 |
+| P1 | [x] | **T-HYB-03-4** r2 训练完成（2026-04-19）：`--entropy-coef 0.05 --entropy-coef-end 0.01 --trade-penalty 0.001`。结果：best eval=-62.02（step 7,680），early stop step 33,280。V.Loss 爆炸（90~648），比 r1 更差。 |
 
 **门禁**：WF Mean Sharpe ≥ 0.0 且无 Python 异常 → 标记 hybrid_v1 为当前最佳，启动 shadow。WF Sharpe 在 (-0.2, 0) → 超参微调继续。WF Sharpe < -0.5 → 架构复盘（obs 设计/信号预计算偏差/分布选择）。
 
+**最终诊断（2026-04-19）**：
+- 信号引擎本身在 WF 期间质量良好：固定 scale=1.0 基准 **Mean Sharpe=+1.21，Win=11/20，Mean Return=+0.29%**。
+- RL hybrid agent 的失败原因是**奖励误对齐**：Beta 策略发现"降低 scale→减少仓位→减少摩擦损失"是最优局部解，导致 scale≈0.05（接近不操作）。在 conservative 成本下，任何 scale < ~0.3 的仓位都被手续费吃光。
+- 结论：信号引擎在 scale=1.0 时 Sharpe=+1.21 已可进入 shadow；RL 缩放层需要重新设计奖励才能有益。
+- 建议路径 A（生产优先）：信号引擎 + scale=1.0，无 RL，进入 shadow 对照。
+- 建议路径 B（研究继续）：奖励重设计，加入"信号 bar 上 scale 惩罚项"鼓励 scale≥0.5；或改为 discrete 动作（0.25/0.5/0.75/1.0 scale levels）。
+
 ---
 
-### Story: 生产推理适配（`ST-HYB-04`）
+### Story: 生产推理适配（`ST-HYB-04`）— 路径 A：信号引擎直接 shadow
 
-**I want** RLTradingLoop 在 hybrid 模式下能实时接收规则引擎信号并调用 RL 仓位优化器 **so that** hybrid 架构可进入 shadow 对照。
+**决策（2026-04-19）**：采用路径 A（信号引擎 + scale=1.0，无 RL）。RL 缩放层奖励误对齐，暂不继续。
 
 | 优先级 | 状态 | Task |
 |--------|------|------|
-| P2 | [ ] | **T-HYB-04-1** `trader/rl_loop.py` — 新增 `_on_signal()` 回调（由 SignalService 注入）：接收 `SignalEvent`，构造 signal_vec（direction/confidence/source），传入 `_build_observation()` 并调用 RL；非信号 bar 的 `_on_candle()` 仍跑但不调用 RL（仅更新 feature 缓存）。 |
-| P2 | [ ] | **T-HYB-04-2** 集成测试（shadow mode）：开启 `shadow_mode=True`，回放最近 30 天历史，对比「规则引擎固定仓位」vs「RL 仓位缩放后」的 Sharpe/MaxDD，确认无 obs_dim 不匹配错误。 |
+| P2 | [~] | **T-HYB-04-1** ~~RL on_signal 回调~~ — 路径 A 下不需要 RL 推理，跳过。 |
+| P1 | [x] | **T-HYB-04-2** `trader --mode hybrid` 已接入 `HybridLoop(paper=True)`：`core/main.py` 新增 `_run_hybrid()` 函数，`--mode hybrid` 启动双袖 paper shadow。CLI：`uv run trader --mode hybrid --symbol ETH/USDT` |
+| P1 | [ ] | **T-HYB-04-3** 启动 shadow 对照：同时运行 `trader --mode rule`（生产）与 `trader --mode hybrid`（paper shadow），跟踪 30 天 P&L 对比。判断标准：hybrid shadow Sharpe ≥ rule Sharpe → 可考虑提升 hybrid 为主策略。 |
 
 ---
 

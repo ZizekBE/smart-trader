@@ -38,3 +38,26 @@ class CapitalAllocator:
 
     def sleeve_budget(self, sleeve: str) -> float:
         return self._long_budget if sleeve == "core" else self._short_budget
+
+
+# Confidence → position size scale (fraction of max position cap)
+_CONF_TIERS: list[tuple[float, float]] = [
+    (0.75, 1.00),   # high confidence  → 100 % of cap
+    (0.65, 0.50),   # medium confidence → 50 % of cap
+    (0.55, 0.25),   # borderline        → 25 % of cap
+]
+
+
+def confidence_to_size_scale(confidence: float) -> float:
+    """Map signal confidence to a position-cap multiplier.
+
+    Tiers (lower bounds, highest first):
+        ≥ 0.75 → 1.00  (full cap)
+        ≥ 0.65 → 0.50  (half cap)
+        ≥ 0.55 → 0.25  (quarter cap)
+        < 0.55 → 0.00  (reject — below minimum confidence)
+    """
+    for threshold, scale in _CONF_TIERS:
+        if confidence >= threshold:
+            return scale
+    return 0.0

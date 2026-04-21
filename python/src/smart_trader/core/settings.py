@@ -105,14 +105,14 @@ class Settings(BaseSettings):
     hybrid_short_budget_pct:  float = 0.30
     hybrid_long_signal_tf:    str   = "4h"
     hybrid_long_trend_tf:     str   = "1d"
-    hybrid_long_min_conf:     float = 0.70
+    hybrid_long_min_conf:     float = 0.55  # ST-ALPHA-04: sweep recommended (Sharpe+2.95, WR 40%)
     hybrid_long_max_pos_pct:  float = 0.30
     hybrid_long_atr_mult:     float = 3.0
     hybrid_long_rr_ratio:     float = 3.0
     hybrid_short_signal_tf:   str   = "1h"
     hybrid_short_trend_tf:    str   = "1d"
     hybrid_short_mid_tf:      str   = "4h"
-    hybrid_short_min_conf:    float = 0.65
+    hybrid_short_min_conf:    float = 0.60  # ST-ALPHA-04: sweep recommended (Sharpe+2.95, WR 40%)
     hybrid_short_max_pos_pct: float = 0.10
     hybrid_short_time_stop_h: int   = 24
     # session filter (tactical sleeve only)

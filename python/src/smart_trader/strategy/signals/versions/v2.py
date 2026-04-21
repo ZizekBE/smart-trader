@@ -39,6 +39,7 @@ from smart_trader.strategy.signals.detectors import (
     DetectorResult,
     detect_bollinger_touch,
     detect_ema_bounce,
+    detect_ema_crossover,
     detect_macd_cross,
     detect_rsi,
 )
@@ -47,10 +48,11 @@ from smart_trader.strategy.signals.versions.base import BaseSignalStrategy
 from smart_trader.strategy.trend.regime import MarketRegime, TrendState
 
 _DETECTORS: list[tuple[str, callable]] = [
-    ("rsi",       detect_rsi),
-    ("macd",      detect_macd_cross),
-    ("bollinger", detect_bollinger_touch),
-    ("ema_bounce",detect_ema_bounce),
+    ("rsi",          detect_rsi),
+    ("macd",         detect_macd_cross),
+    ("bollinger",    detect_bollinger_touch),
+    ("ema_bounce",   detect_ema_bounce),
+    ("ema_crossover",detect_ema_crossover),
 ]
 
 MIN_RAW_SCORE   = 0.40
@@ -141,24 +143,32 @@ def _volume_ratio_factor(df: pd.DataFrame) -> tuple[float, float]:
 
 # ── Liquidity guard (Phase 1.3) ───────────────────────────────────────────────
 
-_LIQUIDITY_WINDOW   = 480   # 1h bars ≈ 20 trading days
-_LIQUIDITY_MIN_FRAC = 0.50  # current volume must be ≥ 50 % of 20d average
+# Use a short recent window so the baseline stays in the same volume epoch as
+# the bar being checked.  A long 480-bar window spans historical backfill data
+# (which may use different volume units or exchange) and live-sync data, making
+# the ratio permanently near zero and blocking all signals.
+_LIQUIDITY_WINDOW   = 48    # 1h bars ≈ 2 trading days (recent epoch only)
+_LIQUIDITY_MIN_FRAC = 0.20  # last completed bar must be ≥ 20 % of 2-day median
 
 
 def _is_liquid(df: pd.DataFrame) -> bool:
-    """Return False if current-bar volume is below 50 % of the 20-day average.
+    """Return False if the last completed bar's volume is abnormally low.
 
-    Requires at least 25 bars; if shorter, always passes (insufficient history).
-    Uses 480 1h bars as the lookback to approximate a 20-day volume baseline.
+    Uses iloc[-2] (last completed candle) to avoid partial-bar bias — the
+    current bar has only accumulated a fraction of its final volume.
+    Baseline is the median of the prior _LIQUIDITY_WINDOW completed bars so
+    the check adapts to the current volume epoch.
     """
     vol = df["volume"].astype(float)
     if len(vol) < 25:
         return True
-    window = min(_LIQUIDITY_WINDOW, len(vol) - 1)
-    avg_vol = float(vol.iloc[-window - 1:-1].mean())
-    if avg_vol <= 0:
+    # baseline: median of completed bars before the last completed one
+    window     = min(_LIQUIDITY_WINDOW, len(vol) - 2)
+    baseline   = float(vol.iloc[-window - 2:-2].median())
+    if baseline <= 0:
         return True
-    return float(vol.iloc[-1]) / avg_vol >= _LIQUIDITY_MIN_FRAC
+    last_complete = float(vol.iloc[-2])
+    return last_complete / baseline >= _LIQUIDITY_MIN_FRAC
 
 
 # ── Voting ────────────────────────────────────────────────────────────────────

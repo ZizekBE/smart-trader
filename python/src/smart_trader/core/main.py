@@ -32,8 +32,8 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--cash",      type=float, default=None, help="Initial virtual cash")
     p.add_argument("--once",      action="store_true", help="Run a single tick and exit")
     p.add_argument("--log-level", default=None, choices=["DEBUG","INFO","WARNING","ERROR"])
-    p.add_argument("--mode",      default="rule", choices=["rule", "rl", "shadow"],
-                   help="Trading mode: rule-based (default), RL agent, or shadow comparison")
+    p.add_argument("--mode",      default="rule", choices=["rule", "rl", "shadow", "hybrid"],
+                   help="Trading mode: rule-based (default), RL agent, shadow comparison, or hybrid dual-sleeve paper")
     p.add_argument("--model-path", default=None, help="Path to trained RL agent checkpoint")
     return p.parse_args()
 
@@ -58,6 +58,8 @@ async def _run(args: argparse.Namespace) -> None:
 
     if args.mode in ("rl", "shadow"):
         await _run_rl(args, symbol, cash, paper)
+    elif args.mode == "hybrid":
+        await _run_hybrid(args, symbol, cash, paper)
     else:
         await _run_rule(args, symbol, cash, paper)
 
@@ -122,6 +124,31 @@ async def _run_rl(args, symbol: str, cash: float, paper: bool) -> None:
     run_task = asyncio.create_task(rl_loop.start())
     await stop.wait()
     await rl_loop.stop()
+    run_task.cancel()
+    try:
+        await run_task
+    except asyncio.CancelledError:
+        pass
+
+    log.info("shutdown_complete")
+
+
+async def _run_hybrid(args, symbol: str, cash: float, paper: bool) -> None:
+    from smart_trader.trader.hybrid_loop import HybridLoop
+
+    loop = HybridLoop(symbol=symbol, initial_cash=cash, paper=True)
+
+    stop = asyncio.Event()
+    ev_loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        ev_loop.add_signal_handler(sig, stop.set)
+
+    if args.once:
+        await loop.run_once()
+        return
+
+    run_task = asyncio.create_task(loop.run())
+    await stop.wait()
     run_task.cancel()
     try:
         await run_task
