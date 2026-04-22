@@ -65,6 +65,7 @@ class HybridBacktestEngine:
         symbol:          str   = "BTC/USDT",
         initial_capital: float = 10_000.0,
         strategy_version: str  = "v2",
+        regime_routing:   bool = False,
         # Per-symbol optimised core params (from optimization_runs table).
         # Takes priority over global settings and individual overrides.
         core_params:      Optional[dict[str, Any]] = None,
@@ -83,6 +84,7 @@ class HybridBacktestEngine:
 
         self._symbol          = symbol
         self._initial_capital = initial_capital
+        self._regime_routing  = regime_routing
 
         long_budget  = initial_capital * s.hybrid_long_budget_pct
         short_budget = initial_capital * s.hybrid_short_budget_pct
@@ -100,6 +102,7 @@ class HybridBacktestEngine:
             initial_capital=long_budget,
             min_confidence=_c("min_confidence", core_min_conf, s.hybrid_long_min_conf),
             max_position_pct=s.hybrid_long_max_pos_pct,
+            regime_routing=regime_routing,
             strategy_version=strategy_version,
             require_mtf=False,
             sl_cooldown_bars=int(_cp.get("sl_cooldown_bars", 4)),
@@ -125,6 +128,7 @@ class HybridBacktestEngine:
             min_confidence=tact_min_conf or s.hybrid_short_min_conf,
             max_position_pct=s.hybrid_short_max_pos_pct,  # 10 % of budget per trade
             strategy_version=strategy_version,
+            regime_routing=regime_routing,
             require_mtf=True,        # tactical uses 4h MTF alignment
             sl_cooldown_bars=s.opt_sl_cooldown_bars or 3,
             atr_mult=tact_atr_mult  or s.opt_atr_mult,

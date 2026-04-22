@@ -123,6 +123,8 @@ class Settings(BaseSettings):
     hybrid_partial_tp:         bool  = True
     hybrid_partial_tp_r:       float = 1.0
     hybrid_partial_tp_pct:     float = 0.50
+    # Phase 2.3 regime-based strategy routing
+    hybrid_regime_routing:     bool  = True
 
     # ── Rust engine ───────────────────────────────────────────
     rust_engine_host: str = "localhost"

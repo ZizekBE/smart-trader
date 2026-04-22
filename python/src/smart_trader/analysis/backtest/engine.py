@@ -117,8 +117,9 @@ class BacktestConfig:
     pullback_atr_frac: float = 0.30   # limit = close ± pullback_atr_frac × ATR from close
     pullback_max_bars: int   = 3      # cancel pending entry after this many unfilled bars
 
-    # signal strategy version
-    strategy_version: str = "v2"      # set to "v1" to run baseline for comparison
+    # signal strategy version + Phase 2.3 regime routing
+    strategy_version: str  = "v2"     # set to "v1" to run baseline for comparison
+    regime_routing:   bool = False    # True = route strategy preset by MarketRegime
 
     # risk param overrides (None = use PositionSizer mode defaults)
     atr_mult:   Optional[float] = None   # stop-loss ATR multiplier
@@ -237,7 +238,8 @@ class BacktestEngine:
         mid_df   = self._normalise(mid_candles)   if mid_candles   is not None else None
 
         trend_eng    = TrendEngine()
-        signal_eng   = SignalEngine(version=self.cfg.strategy_version)
+        signal_eng   = SignalEngine(version=self.cfg.strategy_version,
+                                    regime_routing=self.cfg.regime_routing)
         vol_analyzer = VolatilityAnalyzer()
 
         # ── pre-compute trend / mid states (cache by bar time) ────────────────

@@ -15,6 +15,7 @@ from typing import Optional
 
 import pandas as pd
 
+from smart_trader.core.settings import get_settings
 from smart_trader.risk.manager import RiskManager
 from smart_trader.risk.models import Portfolio, RiskDecision
 from smart_trader.strategy.adaptive_params import RegimeParamAdapter
@@ -53,7 +54,8 @@ class CoreSleeve:
         self._log          = log.bind(sleeve="core", symbol=symbol)
 
         self._trend   = TrendEngine()
-        self._signal  = SignalEngine(version=strategy_version)
+        self._signal  = SignalEngine(version=strategy_version,
+                                     regime_routing=get_settings().hybrid_regime_routing)
         self._vol     = VolatilityAnalyzer()
         self._regime_adapter = RegimeParamAdapter()
         self._risk   = RiskManager(

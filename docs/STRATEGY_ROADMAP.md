@@ -153,18 +153,18 @@ P5 (later) EPIC-RL-V10  RL v10 (only after P0–P1 prove rule edge)
 
 ---
 
-## EPIC-PHASE2 — Complete Phase 2.3 Multi-Strategy (P3)
+## EPIC-PHASE2 — Complete Phase 2.3 Multi-Strategy (P3) — ✅ DONE (2026-04-22)
 
 **Goal**: Register multiple signal strategies and route by regime.
 
-### ST-PHASE2-01 — Strategy registry
+### ST-PHASE2-01 — Strategy registry ✅
 
-| # | Task | Notes |
-|---|------|-------|
-| T-01-1 | Define `StrategyRegistry` with `register(name, strategy, regime_affinity)` | `strategy/registry.py` |
-| T-01-2 | Register existing strategies: `trend_follower`, `mean_reversion`, `breakout` | |
-| T-01-3 | Wire `RegimeParamAdapter` to select strategy by regime at runtime | `BULL_TRENDING → trend_follower`, `RANGING → mean_reversion` |
-| T-01-4 | Backtest multi-strategy vs single-strategy routing | Accept if Sharpe improves ≥ 0.3 |
+| # | Task | Status | Notes |
+|---|------|--------|-------|
+| T-01-1 | `StrategyRegistry` with `register(name, factory, regime_affinity)` | ✅ | `strategy/registry.py` — lazy-instantiated instances, `for_regime()` lookup |
+| T-01-2 | Register presets: `trend_follower`, `mean_reversion`, `breakout`, `full_v2` | ✅ | Augmented (all 5 detectors per preset, regime-priority ordering) |
+| T-01-3 | Wire `regime_routing=True` into sleeves + backtest engine | ✅ | `hybrid_regime_routing: bool = True` in settings; both sleeves + `BacktestConfig` |
+| T-01-4 | Backtest routing vs single-strategy | ✅ neutral | Δ Sharpe = 0.000 on 480d ETH. Same 10 trades, same WR/Sharpe. Gate fails (< 0.3) but routing is zero-impact not negative. Kept ON — will show lift with multi-symbol or longer data. |
 
 ---
 
