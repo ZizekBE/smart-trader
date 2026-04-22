@@ -137,19 +137,19 @@ P5 (later) EPIC-RL-V10  RL v10 (only after P0–P1 prove rule edge)
 
 ### ST-MULTI-01 — BTC/USDT onboarding
 
-| # | Task | Notes |
-|---|------|-------|
-| T-01-1 | Backfill BTC/USDT 1h/4h/1d from 2024-01-01 (GateIO) | Already partly done |
-| T-01-2 | Run full backtest on BTC/USDT with current strategy | Verify edge exists |
-| T-01-3 | Add BTC/USDT to `HybridLoop` — second set of sleeves sharing same DB/client | Capital split: 50% ETH / 50% BTC initially |
+| # | Task | Status | Notes |
+|---|------|--------|-------|
+| T-01-1 | Backfill BTC/USDT 1h/4h/1d | ✅ | 480 days of data available |
+| T-01-2 | Verify BTC edge via backtest sweep | ❌ blocked | All 16 configs negative Sharpe (-1.88 to -2.08), WR ~30%. ETH got +2.95; BTC signal engine has no edge on BTC. Gate fails — do NOT add to live loop yet. Re-evaluate after signal engine improvements (EPIC-PHASE2). |
+| T-01-3 | Add BTC to live loop (50/50 split) | ⏸ deferred | Infrastructure built (`MultiHybridLoop`, `CorrelationGuard`, per-symbol `peak_key`). Activate when BTC backtest passes WR≥40% + Sharpe>0. |
 
 ### ST-MULTI-02 — Correlation-aware position sizing
 
-| # | Task | Notes |
-|---|------|-------|
-| T-02-1 | Compute rolling 30-day correlation ETH/BTC in `CapitalAllocator` | |
-| T-02-2 | If correlation > 0.80: reduce combined exposure by 20% | Avoid doubling correlated risk |
-| T-02-3 | Backtest dual-symbol vs single-symbol on Sharpe and max drawdown | Accept if Sharpe improves |
+| # | Task | Status | Notes |
+|---|------|--------|-------|
+| T-02-1 | Rolling 30-day correlation guard | ✅ | `CorrelationGuard` in `sleeve/correlation_guard.py` — 30-day Pearson on 1d closes |
+| T-02-2 | >0.80 correlation → reduce exposure 20% | ✅ | `MultiHybridLoop._correlation_watchdog()` — hourly check, injects cap mult |
+| T-02-3 | Dual-symbol backtest | ⏸ deferred | Blocked on T-01-2 passing |
 
 ---
 

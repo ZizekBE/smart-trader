@@ -46,9 +46,10 @@ class Portfolio:
 
     @property
     def drawdown_pct(self) -> float:
-        if self.peak_value <= 0:
+        peak = float(self.peak_value)
+        if peak <= 0:
             return 0.0
-        return max(0.0, (self.peak_value - self.total_value) / self.peak_value)
+        return max(0.0, (peak - self.total_value) / peak)
 
     @property
     def daily_loss_pct(self) -> float:

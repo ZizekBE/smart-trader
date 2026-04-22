@@ -268,6 +268,7 @@ class HybridLoop:
         p = await self._engine.get_portfolio(
             initial_cash=self._initial_cash,
             current_prices={self._symbol: price},
+            peak_key=self._symbol,
         )
         self._log.info(
             "portfolio_snapshot",

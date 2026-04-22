@@ -244,6 +244,7 @@ class ExecutionEngine:
         current_prices: Optional[dict[str, float]] = None,
         sleeve:         Optional[str] = None,
         sleeve_budget:  Optional[float] = None,
+        peak_key:       str = "default",
     ) -> Portfolio:
         """Reconstruct Portfolio from open DB trades.
 
@@ -264,7 +265,7 @@ class ExecutionEngine:
             all_open        = await repo.get_open()
             sleeve_open     = await repo.get_open(sleeve=sleeve) if sleeve else all_open
             closed          = await repo.get_closed(limit=500)
-            stored_peak     = await repo.get_peak_value()
+            stored_peak     = await repo.get_peak_value(key=peak_key)
 
         today = date.today()
         daily_pnl = sum(
@@ -294,7 +295,7 @@ class ExecutionEngine:
         if peak_value > (stored_peak or 0.0):
             async with self._factory() as session:
                 repo = TradeRepository(session)
-                await repo.update_peak_value(peak_value)
+                await repo.update_peak_value(peak_value, key=peak_key)
 
         # Build positions dict filtered to this sleeve
         positions: dict[str, OpenPosition] = {}
