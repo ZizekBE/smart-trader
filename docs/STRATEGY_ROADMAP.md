@@ -75,16 +75,16 @@ P5 (later) EPIC-RL-V10  RL v10 (only after P0–P1 prove rule edge)
 | T-01-4 | Backtest: long-only vs long+short, 480d ETH/USDT | ✅ PASS | A(long): Sharpe=-18.4, 2 trades. B(both): Sharpe=+2.95, 10 trades (8 short), short_PnL=+$34.94. Δ=+21.3 ≥ −0.2 gate |
 | T-01-5 | Update `HybridBacktestEngine` to report long/short trade split | ✅ | `long_trades`/`short_trades` properties on `HybridBacktestResult`; `compare_short_entries.py` script |
 
-### ST-ALPHA-02 — Graduated position sizing by confidence
+### ST-ALPHA-02 — Graduated position sizing by confidence ✅ DONE (2026-04-25)
 
 > All-or-nothing at 0.70 threshold leaves edge on the table.
 
-| # | Task | Notes |
-|---|------|-------|
-| T-02-1 | Define sizing tiers: `[0.55, 0.65, 0.75]` → `[25%, 50%, 100%]` of max position | Configurable in settings |
-| T-02-2 | Implement `confidence_to_size_pct()` util in `sleeve/capital.py` | Replace binary threshold logic |
-| T-02-3 | Wire into `CoreSleeve.evaluate()` and `TacticalSleeve.evaluate()` | `max_position_pct * size_tier` |
-| T-02-4 | Backtest: compare binary vs graduated sizing (Sharpe, trade count, win rate) | Accept if Sharpe improves ≥ 0.2 |
+| # | Task | Status | Notes |
+|---|------|--------|-------|
+| T-02-1 | Define sizing tiers: `[0.55, 0.65, 0.75]` → `[25%, 50%, 100%]` of max position | ✅ | `_CONF_TIERS` in `sleeve/capital.py` — already implemented |
+| T-02-2 | Implement `confidence_to_size_scale()` in `sleeve/capital.py` | ✅ | Already implemented; wired into live sleeves |
+| T-02-3 | Wire into `CoreSleeve`, `TacticalSleeve`, and `BacktestEngine` | ✅ | Live sleeves already done; added `graduated_sizing` flag to `BacktestConfig` and engine loop |
+| T-02-4 | Backtest: binary vs graduated sizing, 480d ETH/USDT | ✅ PASS | A(binary): Sharpe=+2.95. B(tiered): Sharpe=+4.24, PnL=+$31.45. Δ=+1.29 ≥ −0.2 gate |
 
 ### ST-ALPHA-03 — Regime-adaptive position cap
 

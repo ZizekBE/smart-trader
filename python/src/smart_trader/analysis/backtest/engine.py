@@ -47,6 +47,7 @@ import pandas as pd
 
 from smart_trader.analysis.metrics.calculator import MetricsCalculator, TradeResult, PerformanceMetrics
 from smart_trader.risk.manager import RiskManager
+from smart_trader.sleeve.capital import confidence_to_size_scale
 from smart_trader.risk.models import OpenPosition, Portfolio
 from smart_trader.risk.position.sizer import PositionSizer
 from smart_trader.strategy.signals.engine import SignalEngine
@@ -146,6 +147,10 @@ class BacktestConfig:
 
     # long-only mode — skip all short (sell) signals; used for benchmarking
     long_only: bool = False
+
+    # graduated position sizing — scale position by confidence tier
+    # [0.55, 0.65, 0.75] → [25%, 50%, 100%] of max position (matches live sleeves)
+    graduated_sizing: bool = True
 
 
 @dataclass
@@ -513,8 +518,10 @@ class BacktestEngine:
                 best = dataclasses.replace(best, confidence=round(scaled_conf, 4))
 
             # ── 10. risk evaluation ───────────────────────────────────────
-            portfolio = self._make_portfolio(capital, open_pos, close_price)
-            decision  = risk_mgr.evaluate(best, portfolio, close_price, sig_window, trend_window)
+            portfolio  = self._make_portfolio(capital, open_pos, close_price)
+            size_scale = confidence_to_size_scale(best.confidence) if self.cfg.graduated_sizing else 1.0
+            decision   = risk_mgr.evaluate(best, portfolio, close_price, sig_window, trend_window,
+                                           size_scale=size_scale)
             if not decision.approved or decision.position_size is None:
                 continue
 

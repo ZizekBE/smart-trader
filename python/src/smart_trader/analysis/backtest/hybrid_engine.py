@@ -73,8 +73,9 @@ class HybridBacktestEngine:
         symbol:          str   = "BTC/USDT",
         initial_capital: float = 10_000.0,
         strategy_version: str  = "v2",
-        regime_routing:   bool = False,
-        long_only:        bool = False,
+        regime_routing:    bool = False,
+        long_only:         bool = False,
+        graduated_sizing:  bool = True,
         # Per-symbol optimised core params (from optimization_runs table).
         # Takes priority over global settings and individual overrides.
         core_params:      Optional[dict[str, Any]] = None,
@@ -128,6 +129,7 @@ class HybridBacktestEngine:
             partial_tp_r=s.hybrid_partial_tp_r,
             partial_tp_pct=s.hybrid_partial_tp_pct,
             long_only=long_only,
+            graduated_sizing=graduated_sizing,
         )
 
         # ── tactical sleeve config ────────────────────────────────────────
@@ -153,6 +155,7 @@ class HybridBacktestEngine:
             partial_tp_r=s.hybrid_partial_tp_r,
             partial_tp_pct=s.hybrid_partial_tp_pct,
             long_only=long_only,
+            graduated_sizing=graduated_sizing,
         )
 
         self._calc = MetricsCalculator()
