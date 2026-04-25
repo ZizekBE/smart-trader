@@ -144,6 +144,9 @@ class BacktestConfig:
     bear_filter_threshold: float = -0.15   # direction threshold (< this = bearish day)
     bear_filter_long_only: bool  = True    # only block longs (allow shorts)
 
+    # long-only mode — skip all short (sell) signals; used for benchmarking
+    long_only: bool = False
+
 
 @dataclass
 class BacktestResult:
@@ -473,6 +476,10 @@ class BacktestEngine:
 
             best       = signals[0]
             entry_side = "buy" if best.signal_type == "long" else "sell"
+
+            # ── 8a-0. long-only mode ──────────────────────────────────────
+            if self.cfg.long_only and entry_side == "sell":
+                continue
 
             # ── 8a. bear market filter ───────────────────────────────────
             if self.cfg.bear_filter and consecutive_bear >= self.cfg.bear_filter_bars:

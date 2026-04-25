@@ -23,6 +23,7 @@ from smart_trader.risk.models import Portfolio
 from smart_trader.strategy.adaptive_params import RegimeParamAdapter
 from smart_trader.strategy.signals.engine import SignalEngine
 from smart_trader.strategy.trend.engine import TrendEngine
+from smart_trader.strategy.trend.regime import MarketRegime
 from smart_trader.strategy.volatility.analyzer import VolatilityAnalyzer
 from smart_trader.sleeve.capital import confidence_to_size_scale
 from smart_trader.sleeve.models import SleeveDecision, SleeveId, SleeveState
@@ -30,9 +31,19 @@ from smart_trader.sleeve.models import SleeveDecision, SleeveId, SleeveState
 log = structlog.get_logger(__name__)
 
 MIN_CANDLES      = 60
-MTF_THRESHOLD    = 0.10
+# Aligned with backtest engine hard-block threshold (was 0.10 — too tight,
+# blocked shorts in distribution where 4h bounces are normal).
+MTF_THRESHOLD    = 0.30
 SL_COOLDOWN      = 3
 SL_COOLDOWN_HIGH = 8
+
+# Regimes where short entries are permitted (guard against naked shorts in
+# accumulation / bull markets where smart money is positioned long).
+_SHORT_ENTRY_REGIMES = frozenset({
+    MarketRegime.BEAR_TRENDING,
+    MarketRegime.BEAR_RANGING,
+    MarketRegime.DISTRIBUTION,
+})
 
 
 class TacticalSleeve:
@@ -152,6 +163,13 @@ class TacticalSleeve:
 
         best = signals[0]
         entry_side = "buy" if best.signal_type == "long" else "sell"
+
+        # ── short-entry regime gate ───────────────────────────────────────
+        if entry_side == "sell" and trend_state.regime not in _SHORT_ENTRY_REGIMES:
+            meta["decision"] = "short_regime_blocked"
+            meta["decision_reason"] = f"regime={trend_state.regime} not in short-allowed set"
+            return SleeveDecision(SleeveId.TACTICAL, best, None, portfolio, meta)
+
         meta["signals"] = [
             {
                 "source": s.source, "signal_type": s.signal_type,

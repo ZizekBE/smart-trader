@@ -54,6 +54,14 @@ class HybridBacktestResult:
     start_at: Optional[datetime] = None
     end_at:   Optional[datetime] = None
 
+    @property
+    def long_trades(self) -> list[BacktestTrade]:
+        return [t for t in self.all_trades if t.side == "buy"]
+
+    @property
+    def short_trades(self) -> list[BacktestTrade]:
+        return [t for t in self.all_trades if t.side == "sell"]
+
 
 # ── engine ────────────────────────────────────────────────────────────────────
 
@@ -66,6 +74,7 @@ class HybridBacktestEngine:
         initial_capital: float = 10_000.0,
         strategy_version: str  = "v2",
         regime_routing:   bool = False,
+        long_only:        bool = False,
         # Per-symbol optimised core params (from optimization_runs table).
         # Takes priority over global settings and individual overrides.
         core_params:      Optional[dict[str, Any]] = None,
@@ -85,6 +94,7 @@ class HybridBacktestEngine:
         self._symbol          = symbol
         self._initial_capital = initial_capital
         self._regime_routing  = regime_routing
+        self._long_only       = long_only
 
         long_budget  = initial_capital * s.hybrid_long_budget_pct
         short_budget = initial_capital * s.hybrid_short_budget_pct
@@ -117,6 +127,7 @@ class HybridBacktestEngine:
             partial_tp=s.hybrid_partial_tp,
             partial_tp_r=s.hybrid_partial_tp_r,
             partial_tp_pct=s.hybrid_partial_tp_pct,
+            long_only=long_only,
         )
 
         # ── tactical sleeve config ────────────────────────────────────────
@@ -141,6 +152,7 @@ class HybridBacktestEngine:
             partial_tp=s.hybrid_partial_tp,
             partial_tp_r=s.hybrid_partial_tp_r,
             partial_tp_pct=s.hybrid_partial_tp_pct,
+            long_only=long_only,
         )
 
         self._calc = MetricsCalculator()
