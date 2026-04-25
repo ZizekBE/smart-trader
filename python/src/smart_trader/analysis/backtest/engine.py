@@ -48,6 +48,7 @@ import pandas as pd
 from smart_trader.analysis.metrics.calculator import MetricsCalculator, TradeResult, PerformanceMetrics
 from smart_trader.risk.manager import RiskManager
 from smart_trader.sleeve.capital import confidence_to_size_scale
+from smart_trader.strategy.adaptive_params import RegimeParamAdapter
 from smart_trader.risk.models import OpenPosition, Portfolio
 from smart_trader.risk.position.sizer import PositionSizer
 from smart_trader.strategy.signals.engine import SignalEngine
@@ -293,6 +294,7 @@ class BacktestEngine:
             rr_ratio=self.cfg.rr_ratio,
             kelly_frac=self.cfg.kelly_frac,
         )
+        regime_adapter = RegimeParamAdapter()
 
         capital     = self.cfg.initial_capital
         open_pos:   Optional[_OpenPos]     = None
@@ -518,10 +520,14 @@ class BacktestEngine:
                 best = dataclasses.replace(best, confidence=round(scaled_conf, 4))
 
             # ── 10. risk evaluation ───────────────────────────────────────
-            portfolio  = self._make_portfolio(capital, open_pos, close_price)
-            size_scale = confidence_to_size_scale(best.confidence) if self.cfg.graduated_sizing else 1.0
-            decision   = risk_mgr.evaluate(best, portfolio, close_price, sig_window, trend_window,
-                                           size_scale=size_scale)
+            portfolio     = self._make_portfolio(capital, open_pos, close_price)
+            regime_params = regime_adapter.get(trend_state, vol_state)
+            size_scale    = (
+                confidence_to_size_scale(best.confidence) * regime_params.pos_cap_mult
+                if self.cfg.graduated_sizing else 1.0
+            )
+            decision      = risk_mgr.evaluate(best, portfolio, close_price, sig_window, trend_window,
+                                              size_scale=size_scale)
             if not decision.approved or decision.position_size is None:
                 continue
 

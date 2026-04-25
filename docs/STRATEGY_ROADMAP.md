@@ -86,15 +86,15 @@ P5 (later) EPIC-RL-V10  RL v10 (only after P0–P1 prove rule edge)
 | T-02-3 | Wire into `CoreSleeve`, `TacticalSleeve`, and `BacktestEngine` | ✅ | Live sleeves already done; added `graduated_sizing` flag to `BacktestConfig` and engine loop |
 | T-02-4 | Backtest: binary vs graduated sizing, 480d ETH/USDT | ✅ PASS | A(binary): Sharpe=+2.95. B(tiered): Sharpe=+4.24, PnL=+$31.45. Δ=+1.29 ≥ −0.2 gate |
 
-### ST-ALPHA-03 — Regime-adaptive position cap
+### ST-ALPHA-03 — Regime-adaptive position cap ✅ DONE (2026-04-25)
 
 > Same max position in trending vs ranging is sub-optimal.
 
-| # | Task | Notes |
-|---|------|-------|
-| T-03-1 | Add `regime_pos_cap` multiplier to `RegimeParamAdapter` 24-grid | `bull_trending=1.0`, `bull_ranging=0.6`, `accumulation=0.5`, `distribution=0.3` |
-| T-03-2 | Wire multiplier into both sleeves' position calculation | |
-| T-03-3 | Verify via `--once` tick: log shows position cap applied per regime | |
+| # | Task | Status | Notes |
+|---|------|--------|-------|
+| T-03-1 | Add `pos_cap_mult` to `RegimeParamAdapter` 24-grid | ✅ | Already implemented: `bull_trending=1.0`, `bull_ranging=0.6`, `accumulation=0.5`, `distribution=0.3` |
+| T-03-2 | Wire into both sleeves + `BacktestEngine` | ✅ | Live sleeves multiply `confidence_to_size_scale × pos_cap_mult`; added `RegimeParamAdapter` to backtest engine |
+| T-03-3 | Verify log shows `pos_cap_mult` per regime | ✅ | Both sleeves emit `meta["pos_cap_mult"]` on every `enter` decision; backtest now matches live |
 
 ### ST-ALPHA-04 — Confidence threshold tuning ✅ DONE (2026-04-21)
 
